@@ -37,3 +37,14 @@ test("dashboard receivables use normalized balances and expose a summary endpoin
   assert.match(client, /initialReceivableBalance/);
   assert.match(client, /\/api\/receivables\?summary=1/);
 });
+
+test("dashboard receivables preserve imported snapshots without allocations", async () => {
+  const financials = await read("../app/lib/dashboard-financials.ts");
+  const allocationBranch = financials.indexOf("WHEN EXISTS (SELECT 1 FROM payment_allocations");
+  const snapshotBranch = financials.indexOf("WHEN i.balance_amount_snapshot IS NOT NULL");
+  const paidFallback = financials.indexOf("WHEN i.status = 'paid' THEN 0");
+  assert.ok(allocationBranch >= 0, "allocation-derived balance branch is present");
+  assert.ok(snapshotBranch > allocationBranch, "snapshot is used after allocation-derived balances");
+  assert.ok(paidFallback > snapshotBranch, "paid fallback is evaluated after an explicit snapshot");
+  assert.match(financials, /ELSE MAX\(COALESCE\(i\.total_amount, 0\), 0\)/);
+});

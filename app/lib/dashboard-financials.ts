@@ -10,19 +10,21 @@ export async function getDashboardReceivableBalance() {
       `WITH normalized AS (
          SELECT CASE
            WHEN i.status IN ('cancelled', 'replaced', 'void', 'draft') THEN 0
-           WHEN i.total_amount IS NULL AND i.balance_amount_snapshot IS NULL THEN 0
-           ELSE MAX(
-             COALESCE(
-               i.total_amount
+           WHEN EXISTS (SELECT 1 FROM payment_allocations pa
+                        WHERE pa.invoice_id = i.id AND pa.status = 'applied')
+             OR EXISTS (SELECT 1 FROM credit_note_applications ca
+                        WHERE ca.invoice_id = i.id AND ca.status = 'applied')
+             THEN MAX(
+               COALESCE(i.total_amount, 0)
                  - COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa
                              WHERE pa.invoice_id = i.id AND pa.status = 'applied'), 0)
                  - COALESCE((SELECT SUM(ca.amount) FROM credit_note_applications ca
                              WHERE ca.invoice_id = i.id AND ca.status = 'applied'), 0),
-               i.balance_amount_snapshot,
                0
-             ),
-             0
-           )
+             )
+           WHEN i.balance_amount_snapshot IS NOT NULL THEN MAX(i.balance_amount_snapshot, 0)
+           WHEN i.status = 'paid' THEN 0
+           ELSE MAX(COALESCE(i.total_amount, 0), 0)
          END AS balance
          FROM invoices i
          WHERE i.archived_at IS NULL
