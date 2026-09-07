@@ -17,6 +17,7 @@ DROP TABLE pi_score_evidence;
 DROP TABLE pi_scores;
 DROP TABLE pi_contact_vault;
 DROP TABLE pi_snapshots;
+DROP TABLE IF EXISTS pi_place_context;
 DROP TABLE pi_searches;
 DROP TABLE pi_jobs;
 DROP TABLE pi_sources;

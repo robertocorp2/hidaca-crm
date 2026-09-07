@@ -2,17 +2,30 @@ import { ProspectingError, type BusinessFacts, type Context, type Job, type Pros
 import { defaultPolicy, hash, identityKeys } from "./domain";
 
 export class Repository implements ProspectRepository {
+  private placeContext = new Map<string, { facts: BusinessFacts; expiresAt: string }>();
   constructor(public db: D1Database) {}
   statement(sql: string, ...values: (string | number | null)[]) { return this.db.prepare(sql).bind(...values); }
   async one<T>(sql: string, ...values: (string | number | null)[]): Promise<T | null> { return this.statement(sql, ...values).first<T>(); }
   async all<T>(sql: string, ...values: (string | number | null)[]): Promise<T[]> { return (await this.statement(sql, ...values).all<T>()).results; }
+  private emptyFacts(placeId: string) {
+    return { name: "", address: "", latitude: null, longitude: null, phone: "", website: "", domain: "", categories: [], placeId, mapsUrl: "", rating: null, reviewCount: null, attributions: [] } satisfies BusinessFacts;
+  }
   async policy(tenantId: string): Promise<TenantPolicy> {
     const row = await this.one<{ policy: string }>("SELECT policy FROM pi_policies WHERE tenant_id=?", tenantId);
     return row ? JSON.parse(row.policy) : defaultPolicy();
   }
   async getProspect(tenantId: string, id: string): Promise<Prospect | null> {
-    const row = await this.one<{ id: string; identity_key: string; facts: string; first_seen: string; last_seen: string }>("SELECT * FROM pi_prospects WHERE tenant_id=? AND id=?", tenantId, id);
-    return row ? { ...JSON.parse(row.facts), id: row.id, tenantId, identityKey: row.identity_key, firstSeen: row.first_seen, lastSeen: row.last_seen } : null;
+    const row = await this.one<{ id: string; identity_key: string; place_id: string | null; facts: string; crm_facts: string; first_seen: string; last_seen: string }>("SELECT * FROM pi_prospects WHERE tenant_id=? AND id=?", tenantId, id);
+    if (!row) return null;
+    const now = new Date().toISOString();
+    const legacy = JSON.parse(row.facts || "{}");
+    const crmFacts = JSON.parse(row.crm_facts || "{}");
+    const placeId = row.place_id || crmFacts.placeId || legacy.placeId || "";
+    const cached = this.placeContext.get(`${tenantId}:${id}`);
+    if (cached && cached.expiresAt <= now) this.placeContext.delete(`${tenantId}:${id}`);
+    const context = cached && cached.expiresAt > now ? { context: JSON.stringify(cached.facts) } : await this.one<{ context: string }>("SELECT context FROM pi_place_context WHERE tenant_id=? AND prospect_id=? AND expires_at>?", tenantId, id, now);
+    const googleFacts = context ? JSON.parse(context.context) : {};
+    return { ...this.emptyFacts(placeId), ...crmFacts, ...googleFacts, placeId, id: row.id, tenantId, identityKey: row.identity_key, firstSeen: row.first_seen, lastSeen: row.last_seen };
   }
   async canonicalize(context: Context, facts: BusinessFacts): Promise<Prospect> {
     const keys = await identityKeys(facts), now = new Date().toISOString(), candidate = `p_${await hash([context.tenantId, keys[0]])}`;
@@ -23,8 +36,8 @@ export class Repository implements ProspectRepository {
     // Every statement in the D1 batch is one transaction. A concurrent caller
     // resolves the aliases installed by the first writer inside that transaction.
     await this.db.batch([
-      this.statement(`INSERT INTO pi_prospects (id,tenant_id,identity_key,facts,first_seen,last_seen,actor)
-        SELECT ?,?,?,?,?,?,? WHERE NOT EXISTS (${select}) ON CONFLICT DO NOTHING`, candidate, context.tenantId, keys[0], JSON.stringify(facts), now, now, context.actor, context.tenantId, ...keys),
+      this.statement(`INSERT INTO pi_prospects (id,tenant_id,identity_key,place_id,facts,crm_facts,first_seen,last_seen,actor)
+        SELECT ?,?,?,?,?,'{}',?,?,? WHERE NOT EXISTS (${select}) ON CONFLICT DO NOTHING`, candidate, context.tenantId, keys[0], facts.placeId, JSON.stringify({ placeId: facts.placeId }), now, now, context.actor, context.tenantId, ...keys),
       ...keys.map(key => this.statement(`INSERT INTO pi_identities (tenant_id,identity_key,prospect_id,created_at)
         VALUES (?,?,COALESCE((${select}),?),?) ON CONFLICT DO NOTHING`, context.tenantId, key, context.tenantId, ...keys, candidate, now)),
     ]);
@@ -34,17 +47,27 @@ export class Repository implements ProspectRepository {
     if (ids.length !== 1) throw new ProspectingError("conflict", "Identidad ambigua; se requiere revisión.");
     const previous = await this.getProspect(context.tenantId, canonical.prospect_id);
     if (!previous) throw new ProspectingError("unknown");
-    const merged = { ...facts, website: facts.website || previous.website, domain: facts.domain || previous.domain, phone: facts.phone || previous.phone, address: facts.address || previous.address };
+    const merged = { ...previous, ...facts, placeId: facts.placeId || previous.placeId };
     await this.db.batch([
-      this.statement("UPDATE pi_prospects SET facts=?,last_seen=? WHERE tenant_id=? AND id=?", JSON.stringify(merged), now, context.tenantId, previous.id),
+      this.statement("UPDATE pi_prospects SET place_id=?,facts=?,last_seen=? WHERE tenant_id=? AND id=?", merged.placeId, JSON.stringify({ placeId: merged.placeId }), now, context.tenantId, previous.id),
       this.statement(`INSERT INTO pi_sources (tenant_id,provider,external_id,prospect_id,source_url,confidence,first_seen,last_seen)
-        VALUES (?,'google_places',?,?,?,1,?,?) ON CONFLICT(tenant_id,provider,external_id) DO UPDATE SET last_seen=excluded.last_seen,source_url=excluded.source_url`, context.tenantId, facts.placeId || keys[0], previous.id, facts.mapsUrl, now, now),
+        VALUES (?,'google_places',?,?,?,1,?,?) ON CONFLICT(tenant_id,provider,external_id) DO UPDATE SET last_seen=excluded.last_seen,source_url=excluded.source_url`, context.tenantId, facts.placeId || keys[0], previous.id, facts.placeId ? `https://www.google.com/maps/search/?api=1&query_place_id=${encodeURIComponent(facts.placeId)}` : "", now, now),
     ]);
+    this.placeContext.set(`${context.tenantId}:${previous.id}`, { facts, expiresAt: new Date(Date.now() + 86400_000).toISOString() });
     return { ...previous, ...merged, lastSeen: now };
   }
   async snapshots(tenantId: string, prospectId: string): Promise<Snapshot[]> {
-    const rows = await this.all<{ snapshot: string }>("SELECT snapshot FROM pi_snapshots WHERE tenant_id=? AND prospect_id=? ORDER BY retrieved_at DESC,id DESC LIMIT 200", tenantId, prospectId);
-    return rows.map(row => JSON.parse(row.snapshot));
+    const now = new Date().toISOString();
+    const rows = await this.all<{ snapshot: string; provider: string }>("SELECT snapshot,provider FROM pi_snapshots WHERE tenant_id=? AND prospect_id=? ORDER BY retrieved_at DESC,id DESC LIMIT 200", tenantId, prospectId);
+    const cached = this.placeContext.get(`${tenantId}:${prospectId}`);
+    if (cached && cached.expiresAt <= now) this.placeContext.delete(`${tenantId}:${prospectId}`);
+    const context = cached && cached.expiresAt > now ? { context: JSON.stringify(cached.facts) } : await this.one<{ context: string }>("SELECT context FROM pi_place_context WHERE tenant_id=? AND prospect_id=? AND expires_at>?", tenantId, prospectId, now);
+    const facts = context ? JSON.parse(context.context) : null;
+    return rows.map(row => {
+      const snapshot = JSON.parse(row.snapshot) as Snapshot;
+      if (row.provider === "google_places" && facts && snapshot.expiresAt > now) snapshot.data = { ...snapshot.data, facts };
+      return snapshot;
+    });
   }
   async enqueue(context: Context, input: Parameters<ProspectRepository["enqueue"]>[1]): Promise<Job> {
     const now = new Date().toISOString(), id = `j_${await hash([context.tenantId, input.key])}`;

@@ -158,6 +158,10 @@ export class WorkerRuntime {
   }
   private async saveSnapshot(job: Job, prospectId: string, result: ProviderResult, started: number, error: Snapshot["error"] = null) {
     const id = `ev_${await hash([job.tenant_id, prospectId, job.id])}`, now = new Date().toISOString(), data = structuredClone(result.data);
+    const googleFacts = job.provider === "google_places" ? data.facts : undefined;
+    // Place listing data is held in a separately expiring context row. The
+    // immutable evidence record keeps only provenance and derived evidence IDs.
+    if (job.provider === "google_places") delete data.facts;
     let encrypted: string | null = null;
     if (data.contacts?.length) encrypted = await sealContacts(data.contacts, this.adapters.contactEncryptionKey(), `${job.tenant_id}:${id}`);
     delete data.contacts;
@@ -166,7 +170,9 @@ export class WorkerRuntime {
       latencyMs: Date.now() - started, costUnits: error === "policy_blocked" || result.status === "missing" ? 0 : 1, requestId: job.request_id };
     const policy = await this.repo.policy(job.tenant_id);
     await this.repo.db.batch([
+      ...(googleFacts ? [this.repo.statement("DELETE FROM pi_place_context WHERE tenant_id=? AND expires_at<=?", job.tenant_id, now)] : []),
       this.repo.statement("INSERT INTO pi_snapshots(id,tenant_id,prospect_id,provider,operation,status,snapshot,retrieved_at,expires_at,job_id) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING", id, job.tenant_id, prospectId, job.provider, job.operation, snapshot.status, JSON.stringify(snapshot), now, snapshot.expiresAt, job.id),
+      ...(googleFacts ? [this.repo.statement("INSERT OR REPLACE INTO pi_place_context(tenant_id,prospect_id,place_id,context,retrieved_at,expires_at) VALUES(?,?,?,?,?,?)", job.tenant_id, prospectId, googleFacts.placeId, JSON.stringify(googleFacts), now, snapshot.expiresAt)] : []),
       ...(encrypted ? [this.repo.statement("INSERT INTO pi_contact_vault(tenant_id,snapshot_id,ciphertext,expires_at) VALUES(?,?,?,?) ON CONFLICT DO NOTHING", job.tenant_id, id, encrypted, new Date(Date.now() + Math.min(policy.retentionDays, 7) * 86400000).toISOString())] : []),
     ]);
   }
