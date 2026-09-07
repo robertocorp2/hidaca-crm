@@ -18,6 +18,6 @@ The Google adapter uses Places API (New) with explicit field masks. It sends one
 
 `pi_snapshots` keeps Google evidence provenance, status, timing, and score links, but its `data.facts` payload is removed before insertion. `pi_prospects.facts` is reduced to `{ placeId }`; `crm_facts` is reserved for HIDACA-owned or derived values. Scores, audit findings, enrichment results, conversion records, and user decisions remain durable because they are HIDACA-derived or explicitly user-created.
 
-Expired context is excluded from repository reads. The scheduled worker removes expired context during the next Google provider write; a fresh search or detail refresh replaces the context and its expiry. A stale prospect therefore retains its Place ID and derived intelligence while requiring a provider refresh before listing fields are used.
+Expired context is excluded from repository reads. The scheduled worker removes expired context on its cleanup tick and during the next Google provider write; a fresh search or detail refresh replaces the context and its expiry. A stale prospect therefore retains its Place ID and derived intelligence while requiring a provider refresh before listing fields are used.
 
 This implementation control does not replace a legal review of the applicable Google Maps Platform agreement. Before enabling production discovery, confirm retention, attribution, display, and downstream CRM use with the applicable policy owner.
