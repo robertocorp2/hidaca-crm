@@ -47,7 +47,7 @@ Opportunity weights are need 35%, configured business/service-area fit 25%, reac
 
 ## CRM mapping and recovery
 
-The target is this application's native D1 CRM: Company â†’ `businesses`, Contact â†’ `contacts`, Opportunity â†’ `opportunities`, Pipeline â†’ existing `evaluation` stage. A general business contact uses the reviewed name and listing phone; Hunter private emails are not exported. Stable external links match first, followed by normalized domain/phone/address signals. Name-only matches require explicit review. All candidates are tenant-bound; the adapter refuses tenants other than `hidaca` because the legacy CRM itself is single tenant.
+The target is this application's native D1 CRM: Company → `businesses`, Contact → `contacts`, Opportunity → `opportunities`, Pipeline → existing `evaluation` stage. A general business contact uses the reviewed name and listing phone; Hunter private emails are not exported. Stable external links match first, followed by normalized domain/phone/address signals. Name-only matches require explicit review. All candidates are tenant-bound; the adapter refuses tenants other than `hidaca` because the legacy CRM itself is single tenant.
 
 Preview and confirm are separate requests. The server rechecks the fingerprint and conflicts before writing. Durable operations run company, contact, opportunity, pipeline in order. Completed steps and deterministic IDs survive retry; successful entities are never deleted as compensation. Failed/partial exports can be re-previewed and submitted through `/prospect-selections/repair` with a new reviewed request key. Repair cannot replace an already completed company/contact/opportunity mapping.
 

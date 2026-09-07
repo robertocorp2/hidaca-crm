@@ -38,7 +38,7 @@ Independent review identified and prompted regression fixes for formatted legacy
 ## Open release gates
 
 1. **Browser verification:** Chrome DevTools MCP required by the applied `browser-verify` skill was unavailable. Permission to use available browser tools/Playwright was requested; no browser result is claimed. Required checks: desktop/mobile, keyboard bulk selection, empty/loading/partial/stale/denied/failed states, evidence links, retry progress, and console/network errors.
-2. **Live sandbox providers:** No provider credentials or paid calls were used. Confirm applicable storage/use rights first, configure staging-only secrets and a small budget, then run the documented search â†’ enrichment â†’ audit â†’ repeated conversion smoke test while inspecting provider cost dashboards.
+2. **Live sandbox providers:** No provider credentials or paid calls were used. Confirm applicable storage/use rights first, configure staging-only secrets and a small budget, then run the documented search → enrichment → audit → repeated conversion smoke test while inspecting provider cost dashboards.
 3. **Google storage policy:** Immutable normalized Google listing persistence is an explicit deployment constraint. A cache TTL does not establish permitted storage. Do not enable live discovery without permission under the applicable agreement or a revised storage design.
 
 Production-wide enablement remains outside the plan's implementation scope. Rollback is flag-first and preserves evidence/CRM history. Destructive down migration is tested only against an empty local installation.
