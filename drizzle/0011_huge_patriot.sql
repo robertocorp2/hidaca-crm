@@ -1,0 +1,1 @@
+-- Compatibility marker: the abandoned task-only support tables are not deployed.

@@ -1,0 +1,1 @@
+CREATE INDEX `import_rows_revision_idx` ON `import_rows` (`revision_id`);

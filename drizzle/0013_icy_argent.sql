@@ -1,0 +1,1 @@
+-- Compatibility marker: backup manifests are stored in the recoverable R2 backup object.

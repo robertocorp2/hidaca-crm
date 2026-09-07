@@ -1,0 +1,1 @@
+-- Compatibility marker: no schema mutation is required for the authoritative replacement.

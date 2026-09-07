@@ -1,0 +1,515 @@
+"use client";
+
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import {
+  activityStatusLabels,
+  activityStatuses,
+  relatedRecordTypes,
+  type RelatedRecordType,
+} from "../lib/crm";
+import type {
+  ActivityRow,
+  BusinessRow,
+  ContactRow,
+  LeadRow,
+  OpportunityRow,
+  RecordRow,
+} from "./types";
+import {
+  Breadcrumbs,
+  Empty,
+  InlineAlert,
+  Pagination,
+  dateTime,
+  dateTimeInputValue,
+  useFormGuard,
+  usePagination,
+  useUrlState,
+} from "./ui";
+
+type AgendaMode = "schedule" | "calendar";
+type CalendarMode = "month" | "week" | "day";
+
+export function AgendaView({
+  mode,
+  activities,
+  setActivities,
+  businesses,
+  contacts,
+  leads,
+  opportunities,
+  records,
+  selectedId,
+  setSelectedId,
+  canWrite,
+  currentUserEmail,
+  setMessage,
+}: {
+  mode: AgendaMode;
+  activities: ActivityRow[];
+  setActivities(value: ActivityRow[]): void;
+  businesses: BusinessRow[];
+  contacts: ContactRow[];
+  leads: LeadRow[];
+  opportunities: OpportunityRow[];
+  records: RecordRow[];
+  selectedId: string | null;
+  setSelectedId(value: string | null): void;
+  canWrite: boolean;
+  currentUserEmail: string;
+  setMessage(message: string): void;
+}) {
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<ActivityRow | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [search, setSearch] = useUrlState("q");
+  const [statusFilter, setStatusFilter] = useUrlState("status");
+  const [ownerFilter, setOwnerFilter] = useUrlState("owner");
+  const [calendarModeValue, setCalendarModeValue] = useUrlState("mode", "month");
+  const calendarMode: CalendarMode = isCalendarMode(calendarModeValue)
+    ? calendarModeValue
+    : "month";
+  const [focusDateValue, setFocusDateValue] = useUrlState(
+    "date",
+    dateKey(new Date()),
+  );
+  const focusDate = parseCalendarDate(focusDateValue);
+  const selected =
+    activities.find((activity) => activity.id === selectedId) ?? null;
+  const owners = [
+    ...new Set(activities.map((activity) => activity.ownerEmail)),
+  ].sort();
+  const filtered = useMemo(
+    () =>
+      activities
+        .filter(
+          (activity) =>
+            (!statusFilter || activity.status === statusFilter) &&
+            (!ownerFilter || activity.ownerEmail === ownerFilter) &&
+            `${activity.title} ${activity.description} ${activity.location} ${activity.notes}`
+              .toLowerCase()
+              .includes(search.trim().toLowerCase()),
+        )
+        .toSorted((left, right) => left.startAt.localeCompare(right.startAt)),
+    [activities, ownerFilter, search, statusFilter],
+  );
+  const { page, pageItems, setPage, totalPages } = usePagination(filtered);
+
+  useEffect(() => {
+    if (
+      mode === "calendar" &&
+      !new URLSearchParams(window.location.search).has("mode") &&
+      window.matchMedia("(max-width: 520px)").matches
+    ) {
+      setCalendarModeValue("day");
+    }
+  }, [mode, setCalendarModeValue]);
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    const form = new FormData(event.currentTarget);
+    const payload = Object.fromEntries(form);
+    payload.allDay = form.get("allDay") === "on" ? "true" : "";
+    const response = await fetch(
+      editing ? `/api/activities/${editing.id}` : "/api/activities",
+      {
+        method: editing ? "PATCH" : "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...payload,
+          allDay: form.get("allDay") === "on",
+        }),
+      },
+    );
+    const result = (await response.json()) as {
+      activity?: ActivityRow;
+      error?: string;
+    };
+    setBusy(false);
+    if (!response.ok || !result.activity) {
+      const error = result.error ?? "No se pudo guardar la actividad.";
+      setFormError(error);
+      setMessage(error);
+      return;
+    }
+    setActivities(
+      editing
+        ? activities.map((activity) =>
+            activity.id === result.activity!.id ? result.activity! : activity,
+          )
+        : [...activities, result.activity].toSorted((left, right) =>
+            left.startAt.localeCompare(right.startAt),
+          ),
+    );
+    setSelectedId(result.activity.id);
+    setEditing(null);
+    setShowForm(false);
+    setFormError("");
+    setMessage("Actividad guardada. Actividades y Calendario están sincronizados.");
+  }
+
+  if (selected) {
+    return (
+      <>
+        <Breadcrumbs
+          items={[
+            { label: "Inicio" },
+            {
+              label: mode === "schedule" ? "Actividades" : "Calendario",
+              onClick: () => setSelectedId(null),
+            },
+            { label: selected.title },
+          ]}
+        />
+        <div className="page-heading">
+          <div>
+            <p className="eyebrow">Datos de actividad compartidos</p>
+            <h1>{selected.title}</h1>
+            <p>{dateTime(selected.startAt, true)} – {dateTime(selected.endAt, true)}</p>
+          </div>
+          {canWrite && (
+            <button className="primary-button" onClick={() => {
+              setEditing(selected);
+              setFormError("");
+              setShowForm(true);
+            }}>Editar actividad</button>
+          )}
+        </div>
+        <section className="detail-card">
+          <dl>
+            <div><dt>Estado</dt><dd>{activityStatusLabels[selected.status]}</dd></div>
+            <div><dt>Día completo</dt><dd>{selected.allDay ? "Sí" : "No"}</dd></div>
+            <div><dt>Responsable</dt><dd>{selected.ownerEmail}</dd></div>
+            <div><dt>Ubicación</dt><dd>{selected.location || "—"}</dd></div>
+            <div><dt>Participantes</dt><dd>{safeAttendees(selected.attendees).join(", ") || "—"}</dd></div>
+            <div><dt>Registro relacionado</dt><dd>{relatedLabel(selected, businesses, contacts, leads, opportunities, records)}</dd></div>
+          </dl>
+          {selected.description && <p className="detail-notes">{selected.description}</p>}
+          {selected.notes && <p className="detail-notes">{selected.notes}</p>}
+        </section>
+        {showForm && (
+          <ActivityForm
+            activity={editing}
+            businesses={businesses}
+            busy={busy}
+            contacts={contacts}
+            currentUserEmail={currentUserEmail}
+            error={formError}
+            leads={leads}
+            onCancel={() => setShowForm(false)}
+            onSubmit={save}
+            opportunities={opportunities}
+            records={records}
+          />
+        )}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Breadcrumbs
+        items={[
+          { label: "Inicio" },
+          { label: mode === "schedule" ? "Actividades" : "Calendario" },
+        ]}
+      />
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">Datos de actividad compartidos</p>
+          <h1>{mode === "schedule" ? "Actividades" : "Calendario"}</h1>
+          <p>
+            {mode === "schedule"
+              ? "Agenda y cronología de las actividades operativas."
+              : "Vistas de mes, semana y día de las mismas actividades."}
+          </p>
+        </div>
+        {canWrite && (
+          <button className="primary-button" onClick={() => {
+            setEditing(null);
+            setFormError("");
+            setShowForm(true);
+          }}>Nueva actividad</button>
+        )}
+      </div>
+      {showForm && (
+        <ActivityForm
+          activity={editing}
+          businesses={businesses}
+          busy={busy}
+          contacts={contacts}
+          currentUserEmail={currentUserEmail}
+          error={formError}
+          leads={leads}
+          onCancel={() => setShowForm(false)}
+          onSubmit={save}
+          opportunities={opportunities}
+          records={records}
+        />
+      )}
+      {mode === "schedule" ? (
+        <>
+          <div className="toolbar toolbar-filters">
+            <input aria-label="Buscar actividades" autoComplete="off" name="q" onChange={(event) => setSearch(event.target.value)} placeholder="Buscar título, descripción o ubicación…" value={search} />
+            <select aria-label="Filtrar actividades por estado" onChange={(event) => setStatusFilter(event.target.value)} value={statusFilter}><option value="">Todos los estados</option>{activityStatuses.map((status) => <option key={status} value={status}>{activityStatusLabels[status]}</option>)}</select>
+            <select aria-label="Filtrar actividades por responsable" onChange={(event) => setOwnerFilter(event.target.value)} value={ownerFilter}><option value="">Todos los responsables</option>{owners.map((owner) => <option key={owner}>{owner}</option>)}</select>
+            <span>{filtered.length} actividades</span>
+          </div>
+          <section className="panel schedule-list">
+            {filtered.length ? pageItems.map((activity) => (
+              <article key={activity.id}>
+                <time dateTime={activity.startAt}><strong>{new Intl.DateTimeFormat("es-DO", { day: "2-digit" }).format(new Date(activity.startAt))}</strong><span>{new Intl.DateTimeFormat("es-DO", { month: "short" }).format(new Date(activity.startAt))}</span></time>
+                <button onClick={() => setSelectedId(activity.id)} type="button">
+                  <strong>{activity.title}</strong>
+                  <span>{activity.allDay ? "Todo el día" : new Intl.DateTimeFormat("es-DO", { hour: "numeric", minute: "2-digit" }).format(new Date(activity.startAt))} · {activity.location || "Sin ubicación"}</span>
+                </button>
+                <span className={`status status-${activity.status}`}>{activityStatusLabels[activity.status]}</span>
+                <span>{activity.ownerEmail}</span>
+              </article>
+            )) : <Empty action={canWrite ? <button className="primary-button" onClick={() => { setEditing(null); setFormError(""); setShowForm(true); }} type="button">Nueva actividad</button> : undefined} text="No hay actividades en esta vista." />}
+            <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
+          </section>
+        </>
+      ) : (
+        <CalendarView
+          activities={filtered}
+          calendarMode={calendarMode}
+          focusDate={focusDate}
+          onMode={(nextMode) => setCalendarModeValue(nextMode)}
+          onMove={(direction) => setFocusDateValue(dateKey(moveDate(focusDate, calendarMode, direction)))}
+          onOpen={setSelectedId}
+          onToday={() => setFocusDateValue(dateKey(new Date()))}
+        />
+      )}
+    </>
+  );
+}
+
+function ActivityForm({
+  activity,
+  businesses,
+  contacts,
+  leads,
+  opportunities,
+  records,
+  busy,
+  currentUserEmail,
+  error,
+  onSubmit,
+  onCancel,
+}: {
+  activity: ActivityRow | null;
+  businesses: BusinessRow[];
+  contacts: ContactRow[];
+  leads: LeadRow[];
+  opportunities: OpportunityRow[];
+  records: RecordRow[];
+  busy: boolean;
+  currentUserEmail: string;
+  error: string;
+  onSubmit(event: FormEvent<HTMLFormElement>): void;
+  onCancel(): void;
+}) {
+  const [relatedType, setRelatedType] = useState<RelatedRecordType | "">(
+    (activity?.relatedType as RelatedRecordType | null) ?? "",
+  );
+  const relatedOptions = relationOptions(
+    relatedType,
+    businesses,
+    contacts,
+    leads,
+    opportunities,
+    records,
+  );
+  const { formProps, requestCancel } = useFormGuard(onCancel);
+  return (
+    <form {...formProps} className="record-form" onSubmit={onSubmit}>
+      <div className="form-heading"><h2>{activity ? "Editar actividad" : "Nueva actividad"}</h2><button aria-label="Cerrar" onClick={requestCancel} type="button">×</button></div>
+      <InlineAlert message={error} />
+      <div className="form-grid">
+        <label className="wide">Título<input autoComplete="off" defaultValue={activity?.title} name="title" required /></label>
+        <label>Inicio<input defaultValue={dateTimeInputValue(activity?.startAt ?? null)} name="startAt" required type="datetime-local" /></label>
+        <label>Fin<input defaultValue={dateTimeInputValue(activity?.endAt ?? null)} name="endAt" required type="datetime-local" /></label>
+        <label className="check-label"><input defaultChecked={activity?.allDay} name="allDay" type="checkbox" /> Día completo</label>
+        <label>Estado<select defaultValue={activity?.status ?? "planned"} name="status">{activityStatuses.map((status) => <option key={status} value={status}>{activityStatusLabels[status]}</option>)}</select></label>
+        <label>Responsable<input autoComplete="email" defaultValue={activity?.ownerEmail ?? currentUserEmail} name="ownerEmail" required spellCheck={false} type="email" /></label>
+        <label>Participantes<input aria-describedby="attendees-hint" autoComplete="off" defaultValue={safeAttendees(activity?.attendees ?? "[]").join(", ")} inputMode="email" name="attendees" placeholder="correo@ejemplo.com, …" spellCheck={false} /><small id="attendees-hint">Separa múltiples correos con comas.</small></label>
+        <label>Ubicación<input autoComplete="off" defaultValue={activity?.location} name="location" /></label>
+        <label>Tipo de registro relacionado<select name="relatedType" onChange={(event) => setRelatedType(event.target.value as RelatedRecordType | "")} value={relatedType}><option value="">Sin registro relacionado</option>{relatedRecordTypes.map((type) => <option key={type} value={type}>{relatedRecordTypeLabel(type)}</option>)}</select></label>
+        <label>Registro relacionado<select defaultValue={activity?.relatedId ?? ""} disabled={!relatedType} name="relatedId"><option value="">Seleccionar registro</option>{relatedOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
+        <label className="wide">Descripción<textarea defaultValue={activity?.description} name="description" rows={3} /></label>
+        <label className="wide">Notas<textarea defaultValue={activity?.notes} name="notes" rows={3} /></label>
+      </div>
+      <div className="form-actions"><button className="secondary-button" onClick={requestCancel} type="button">Cancelar</button><button className="primary-button" disabled={busy}>{busy ? "Guardando…" : "Guardar"}</button></div>
+    </form>
+  );
+}
+
+function CalendarView({
+  activities,
+  calendarMode,
+  focusDate,
+  onMode,
+  onMove,
+  onOpen,
+  onToday,
+}: {
+  activities: ActivityRow[];
+  calendarMode: CalendarMode;
+  focusDate: Date;
+  onMode(mode: CalendarMode): void;
+  onMove(direction: -1 | 1): void;
+  onOpen(id: string): void;
+  onToday(): void;
+}) {
+  const days =
+    calendarMode === "month"
+      ? monthGrid(focusDate)
+      : calendarMode === "week"
+        ? weekDays(focusDate)
+        : [new Date(focusDate)];
+  return (
+    <section className="calendar-panel">
+      <div className="calendar-toolbar">
+        <div><button aria-label="Período anterior" className="secondary-button" onClick={() => onMove(-1)}>←</button><button className="secondary-button" onClick={onToday}>Hoy</button><button aria-label="Período siguiente" className="secondary-button" onClick={() => onMove(1)}>→</button></div>
+        <h2>{calendarTitle(focusDate, calendarMode)}</h2>
+        <div role="group" aria-label="Vista del calendario"><button aria-pressed={calendarMode === "month"} className={calendarMode === "month" ? "active" : ""} onClick={() => onMode("month")}>Mes</button><button aria-pressed={calendarMode === "week"} className={calendarMode === "week" ? "active" : ""} onClick={() => onMode("week")}>Semana</button><button aria-pressed={calendarMode === "day"} className={calendarMode === "day" ? "active" : ""} onClick={() => onMode("day")}>Día</button></div>
+      </div>
+      <div className={`calendar-grid calendar-${calendarMode}-mode`}>
+        {calendarMode !== "day" && weekDays(new Date(2026, 0, 4)).map((day) => <strong className="calendar-weekday" key={day.toISOString()}>{new Intl.DateTimeFormat("es-DO", { weekday: "short" }).format(day)}</strong>)}
+        {days.map((day) => {
+          const events = activities.filter((activity) => sameDay(new Date(activity.startAt), day));
+          return (
+            <article className={sameDay(day, new Date()) ? "calendar-day today" : "calendar-day"} key={day.toISOString()}>
+              <time dateTime={day.toISOString()}>{calendarMode === "day" ? new Intl.DateTimeFormat("es-DO", { weekday: "long", month: "long", day: "numeric" }).format(day) : day.getDate()}</time>
+              <div>{events.map((activity) => <button className={`calendar-event status-${activity.status}`} key={activity.id} onClick={() => onOpen(activity.id)}><strong>{activity.title}</strong><span>{activity.allDay ? "Todo el día" : new Intl.DateTimeFormat("es-DO", { hour: "numeric", minute: "2-digit" }).format(new Date(activity.startAt))}</span></button>)}</div>
+            </article>
+          );
+        })}
+      </div>
+      {calendarMode !== "day" && <p className="scroll-hint">Desliza horizontalmente para ver más días.</p>}
+    </section>
+  );
+}
+
+function safeAttendees(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function isCalendarMode(value: string): value is CalendarMode {
+  return value === "month" || value === "week" || value === "day";
+}
+
+function dateKey(value: Date) {
+  const local = new Date(value);
+  local.setMinutes(local.getMinutes() - local.getTimezoneOffset());
+  return local.toISOString().slice(0, 10);
+}
+
+function parseCalendarDate(value: string) {
+  const parsed = new Date(`${value}T12:00:00`);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+function relatedRecordTypeLabel(type: RelatedRecordType) {
+  const labels: Record<RelatedRecordType, string> = {
+    business: "Empresa",
+    contact: "Contacto",
+    lead: "Prospecto",
+    opportunity: "Oportunidad",
+    case: "Caso",
+    project: "Proyecto",
+  };
+  return labels[type];
+}
+
+function relationOptions(
+  type: RelatedRecordType | "",
+  businesses: BusinessRow[],
+  contacts: ContactRow[],
+  leads: LeadRow[],
+  opportunities: OpportunityRow[],
+  records: RecordRow[],
+) {
+  if (type === "business") return businesses.map((item) => ({ id: item.id, label: item.name }));
+  if (type === "contact") return contacts.map((item) => ({ id: item.id, label: item.name }));
+  if (type === "lead") return leads.map((item) => ({ id: item.id, label: `${item.businessName} · ${item.contactName}` }));
+  if (type === "opportunity") return opportunities.map((item) => ({ id: item.id, label: item.title }));
+  if (type === "case") return records.filter((item) => item.module === "ordenes-cambio").map((item) => ({ id: item.id, label: item.title }));
+  if (type === "project") return records.filter((item) => item.module === "proyectos").map((item) => ({ id: item.id, label: item.title }));
+  return [];
+}
+
+function relatedLabel(
+  activity: ActivityRow,
+  businesses: BusinessRow[],
+  contacts: ContactRow[],
+  leads: LeadRow[],
+  opportunities: OpportunityRow[],
+  records: RecordRow[],
+) {
+  return relationOptions(
+    (activity.relatedType as RelatedRecordType | null) ?? "",
+    businesses,
+    contacts,
+    leads,
+    opportunities,
+    records,
+  ).find((item) => item.id === activity.relatedId)?.label ?? "—";
+}
+
+function sameDay(left: Date, right: Date) {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
+}
+
+function addDays(date: Date, amount: number) {
+  const result = new Date(date);
+  result.setDate(result.getDate() + amount);
+  return result;
+}
+
+function weekDays(date: Date) {
+  const start = addDays(date, -date.getDay());
+  return Array.from({ length: 7 }, (_, index) => addDays(start, index));
+}
+
+function monthGrid(date: Date) {
+  const first = new Date(date.getFullYear(), date.getMonth(), 1);
+  const start = addDays(first, -first.getDay());
+  return Array.from({ length: 42 }, (_, index) => addDays(start, index));
+}
+
+function moveDate(date: Date, mode: CalendarMode, direction: -1 | 1) {
+  const result = new Date(date);
+  if (mode === "month") result.setMonth(result.getMonth() + direction);
+  else result.setDate(result.getDate() + direction * (mode === "week" ? 7 : 1));
+  return result;
+}
+
+function calendarTitle(date: Date, mode: CalendarMode) {
+  if (mode === "day")
+    return new Intl.DateTimeFormat("es-DO", {
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    }).format(date);
+  if (mode === "week") {
+    const days = weekDays(date);
+    return `${new Intl.DateTimeFormat("es-DO", { month: "short", day: "numeric" }).format(days[0])} – ${new Intl.DateTimeFormat("es-DO", { month: "short", day: "numeric", year: "numeric" }).format(days[6])}`;
+  }
+  return new Intl.DateTimeFormat("es-DO", {
+    month: "long",
+    year: "numeric",
+  }).format(date);
+}

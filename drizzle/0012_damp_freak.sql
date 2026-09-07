@@ -1,0 +1,1 @@
+-- Compatibility marker: source values are stored in the existing import_rows table.
