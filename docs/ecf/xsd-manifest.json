@@ -1,0 +1,16 @@
+{
+  "authority": "DGII",
+  "source": "https://dgii.gov.do/cicloContribuyente/facturacion/comprobantesFiscalesElectronicosE-CF/Paginas/documentacionSobreE-CF.aspx",
+  "retrievedAt": "2026-08-20",
+  "schemaVersion": "1.0",
+  "schemas": [
+    { "type": "31", "name": "e-CF 31 v.1.0", "source": "https://dgii.gov.do/cicloContribuyente/facturacion/comprobantesFiscalesElectronicosE-CF/Documentacin%20sobre%20eCF/Documentaci%C3%B3n%20T%C3%A9cnica%20%28XSD%29/e-CF%2031%20v.1.0.xsd", "status": "to-vendor" },
+    { "type": "32", "name": "e-CF 32 v.1.0", "source": "https://dgii.gov.do/cicloContribuyente/facturacion/comprobantesFiscalesElectronicosE-CF/Documentacin%20sobre%20eCF/Documentaci%C3%B3n%20T%C3%A9cnica%20%28XSD%29/e-CF%2032%20v.1.0.xsd", "status": "to-vendor" },
+    { "type": "33", "name": "e-CF 33 v.1.0", "source": "https://dgii.gov.do/cicloContribuyente/facturacion/comprobantesFiscalesElectronicosE-CF/Documentacin%20sobre%20eCF/Documentaci%C3%B3n%20T%C3%A9cnica%20%28XSD%29/e-CF%2033%20v.1.0.xsd", "status": "to-vendor" },
+    { "type": "34", "name": "e-CF 34 v.1.0", "source": "https://dgii.gov.do/cicloContribuyente/facturacion/comprobantesFiscalesElectronicosE-CF/Documentacin%20sobre%20eCF/Documentaci%C3%B3n%20T%C3%A9cnica%20%28XSD%29/e-CF%2034%20v.1.0.xsd", "status": "to-vendor" },
+    { "type": "RFCE32", "name": "RFCE 32 v.1.0", "source": "https://dgii.gov.do/cicloContribuyente/facturacion/comprobantesFiscalesElectronicosE-CF/Documentacin%20sobre%20eCF/Documentaci%C3%B3n%20T%C3%A9cnica%20%28XSD%29/RFCE%2032%20v.1.0.xsd", "status": "to-vendor" },
+    { "type": "ARECF", "name": "ARECF v1.0", "source": "https://dgii.gov.do/cicloContribuyente/facturacion/comprobantesFiscalesElectronicosE-CF/Documentacin%20sobre%20eCF/Documentaci%C3%B3n%20T%C3%A9cnica%20%28XSD%29/ARECF%20v1.0.xsd", "status": "to-vendor" },
+    { "type": "ANECF", "name": "ANECF v1.0", "source": "https://dgii.gov.do/cicloContribuyente/facturacion/comprobantesFiscalesElectronicosE-CF/Documentacin%20sobre%20eCF/Documentaci%C3%B3n%20T%C3%A9cnica%20%28XSD%29/ANECF%20v.1.0.xsd", "status": "to-vendor" },
+    { "type": "ACECF", "name": "ACECF v1.0", "source": "https://dgii.gov.do/cicloContribuyente/facturacion/comprobantesFiscalesElectronicosE-CF/Documentacin%20sobre%20eCF/Documentaci%C3%B3n%20T%C3%A9cnica%20%28XSD%29/ACECF%20v.1.0.xsd", "status": "to-vendor" }
+  ]
+}

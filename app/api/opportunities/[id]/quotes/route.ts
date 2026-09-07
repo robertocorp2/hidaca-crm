@@ -14,7 +14,7 @@ import { searchDocumentStatement } from "../../../../lib/search";
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function GET(_: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "cotizaciones", action: "view" });
   if (!auth.ok) return auth.response;
   const { id } = await context.params;
   const quotes = await getDb()
@@ -34,11 +34,8 @@ export async function GET(_: Request, context: RouteContext) {
 }
 
 export async function POST(request: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "cotizaciones", action: "edit" });
   if (!auth.ok) return auth.response;
-  if (auth.user.role === "viewer") {
-    return Response.json({ error: "Acceso de solo lectura." }, { status: 403 });
-  }
 
   const { id } = await context.params;
   const payload = (await request.json()) as Record<string, unknown>;

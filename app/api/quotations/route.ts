@@ -1,9 +1,12 @@
 import { getD1 } from "../../../db";
 import { authorizeApi } from "../../lib/authorization";
 import { cleanText } from "../../lib/crm";
+import { writeAudit } from "../../lib/audit";
+import { upsertSearchDocument } from "../../lib/search";
+import { calculateDocument } from "../../lib/document-calculations";
 
 export async function GET(request: Request) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "cotizaciones", action: "view" });
   if (!auth.ok) return auth.response;
 
   const params = new URL(request.url).searchParams;
@@ -213,4 +216,167 @@ export async function GET(request: Request) {
     { quotations: result.results, limit, offset },
     { headers: { "cache-control": "private, no-store" } },
   );
+}
+
+export async function POST(request: Request) {
+  const auth = await authorizeApi({ module: "cotizaciones", action: "create" });
+  if (!auth.ok) return auth.response;
+
+  const payload = (await request.json()) as Record<string, unknown>;
+  const quotationNumber = cleanText(payload.quotationNumber, 120);
+  const businessId = cleanText(payload.businessId, 80);
+  if (!quotationNumber || !businessId) {
+    return Response.json({
+      error: "Empresa y número de cotización son obligatorios.",
+      field: !businessId ? "businessId" : "quotationNumber",
+    }, { status: 400 });
+  }
+  const business = await getD1()
+    .prepare("SELECT id, name FROM businesses WHERE id = ? AND archived_at IS NULL")
+    .bind(businessId)
+    .first<{ id: string; name: string }>();
+  if (!business) return Response.json({ error: "La empresa no existe.", field: "businessId" }, { status: 400 });
+
+  const contactId = cleanText(payload.primaryContactId, 80);
+  if (contactId) {
+    const contact = await getD1().prepare("SELECT id FROM contacts WHERE id = ? AND business_id = ? AND archived_at IS NULL").bind(contactId, businessId).first();
+    if (!contact) return Response.json({ error: "El contacto no pertenece a la empresa seleccionada.", field: "primaryContactId" }, { status: 400 });
+  }
+  const projectId = cleanText(payload.projectId, 80);
+  if (projectId) {
+    const project = await getD1().prepare("SELECT id FROM projects WHERE id = ? AND business_id = ? AND archived_at IS NULL").bind(projectId, businessId).first();
+    if (!project) return Response.json({ error: "El proyecto no pertenece a la empresa seleccionada.", field: "projectId" }, { status: 400 });
+  }
+
+  const status = cleanText(payload.status, 30) || "draft";
+  const quotationType = cleanText(payload.quotationType, 30) || "other";
+  const validStatuses = ["draft", "sent", "accepted", "rejected", "expired", "cancelled", "unknown"];
+  const validTypes = ["installation", "repair", "maintenance", "mixed", "other"];
+  if (!validStatuses.includes(status) || !validTypes.includes(quotationType)) {
+    return Response.json({ error: "Estado o tipo de cotización no válido.", field: !validStatuses.includes(status) ? "status" : "quotationType" }, { status: 400 });
+  }
+
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  const revisionId = crypto.randomUUID();
+  const date = cleanText(payload.quotationDate, 20) || null;
+  const year = validYear(payload.quotationYear) ?? (date ? Number(date.slice(0, 4)) : null);
+  const revisionLabel = cleanText(payload.revisionLabel, 180);
+  const alternativeLabel = cleanText(payload.alternativeLabel, 180);
+  const identityKey = `${normalizeQuotationNumber(quotationNumber)}|${revisionLabel}|${alternativeLabel}`;
+  const currency = cleanText(payload.currency, 8).toUpperCase() || "DOP";
+  const rawLines = normalizeQuotationLines(payload.lines);
+  const calculation = calculateDocument({
+    lines: rawLines,
+    discount: payload.discountAmount,
+    additionalCharge: payload.additionalChargeAmount,
+    taxRate: payload.taxRate,
+    advance: payload.paidAmountSnapshot,
+  });
+  if (calculation.errors.length) return Response.json({ error: calculation.errors[0], field: "lines" }, { status: 400 });
+  if (!rawLines.length) return Response.json({ error: "Agrega al menos una partida con descripción.", field: "lines" }, { status: 400 });
+
+  const statements: D1PreparedStatement[] = [
+    getD1().prepare(`INSERT INTO quotations (
+      id, business_id, primary_contact_id, project_id, quotation_number,
+      normalized_quotation_number, family_key, quotation_year, title,
+      quotation_type, service_category, status, currency, source_metadata,
+      owner_email, created_by, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?)`)
+      .bind(id, businessId, contactId || null, projectId || null, quotationNumber,
+        normalizeQuotationNumber(quotationNumber), normalizeQuotationNumber(quotationNumber), year,
+        cleanText(payload.title, 240) || quotationNumber, quotationType,
+        cleanText(payload.serviceCategory, 120), status, currency, auth.user.email,
+        auth.user.email, now, now),
+    getD1().prepare(`INSERT INTO quotation_revisions (
+      id, quotation_id, identity_key, revision_number, revision_label,
+      alternative_label, scope_label, quotation_date, quotation_month,
+      validity_until, is_current, customer_facing_notes, internal_notes,
+      source_metadata, created_by, created_at, updated_at
+    ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 1, ?, ?, '{}', ?, ?, ?)`)
+      .bind(revisionId, id, identityKey, revisionLabel, alternativeLabel,
+        cleanText(payload.scopeLabel, 180), date, date ? Number(date.slice(5, 7)) : null,
+        cleanText(payload.validityUntil, 20) || null,
+        cleanText(payload.customerFacingNotes ?? (payload.terms as Record<string, unknown> | undefined)?.customerFacingNotes, 4000),
+        cleanText(payload.internalNotes ?? (payload.terms as Record<string, unknown> | undefined)?.internalNotes, 4000),
+        auth.user.email, now, now),
+    getD1().prepare(`INSERT INTO quotation_financials (
+      id, revision_id, currency, calculated_subtotal, discount_amount,
+      source_tax_rate, calculated_tax_amount, calculated_total, amount_paid,
+      remaining_balance, payment_status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(crypto.randomUUID(), revisionId, currency, calculation.subtotal, calculation.discount,
+        calculation.taxRate, calculation.taxAmount, calculation.total, calculation.advance,
+        calculation.balance, paymentStatus(calculation.advance, calculation.total), now, now),
+  ];
+  for (const [index, line] of rawLines.entries()) {
+    const calculated = calculation.lines[index];
+    statements.push(getD1().prepare(`INSERT INTO quotation_line_items (
+      id, revision_id, sort_order, description, location, quantity,
+      unit_of_measure, finished_width_cm, finished_height_cm, area_sqm,
+      price_basis, unit_price, price_per_sqm, calculated_line_total,
+      currency, value_states, source_values, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, '{}', '{}', ?, ?)`)
+      .bind(crypto.randomUUID(), revisionId, index, cleanText(line.description, 1000),
+        cleanText(line.location, 300), calculated.quantity, calculated.widthCm,
+        calculated.heightCm, calculated.areaTotal, calculated.areaPerUnit === null ? "unit" : "square_meter",
+        calculated.unitPrice, calculated.areaPerUnit === null ? null : calculated.unitPrice,
+        calculated.lineTotal, currency, now, now));
+  }
+  const terms = (payload.terms && typeof payload.terms === "object" ? payload.terms : {}) as Record<string, unknown>;
+  statements.push(getD1().prepare(`INSERT INTO quotation_terms (
+    id, revision_id, quotation_validity, payment_conditions,
+    additional_cost_notice, original_spanish_text, source_values,
+    created_at, updated_at
+  ) VALUES (?, ?, ?, ?, ?, ?, '{}', ?, ?)`)
+    .bind(crypto.randomUUID(), revisionId, cleanText(payload.validityUntil, 20),
+      cleanText(payload.paymentConditions ?? payload.paymentTermsRaw ?? terms.paymentConditions, 2000),
+      cleanText(terms.additionalCostNotice, 2000), cleanText(terms.originalSpanishText, 4000), now, now));
+  const charge = Math.max(0, Number(payload.additionalChargeAmount) || 0);
+  if (charge > 0) {
+    statements.push(getD1().prepare(`INSERT INTO quotation_charges (
+      id, revision_id, type, label, calculated_amount, currency, value_state, sort_order
+    ) VALUES (?, ?, 'other', ?, ?, ?, 'value', 0)`)
+      .bind(crypto.randomUUID(), revisionId, cleanText(payload.additionalChargeLabel, 120) || "Cargo adicional", charge, currency));
+  }
+  try {
+    await getD1().batch(statements);
+  } catch (error) {
+    if (error instanceof Error && /unique/i.test(error.message)) {
+      return Response.json({ error: "El número de cotización ya existe para esta revisión.", field: "quotationNumber" }, { status: 409 });
+    }
+    return Response.json({ error: "No se pudo guardar la cotización." }, { status: 500 });
+  }
+  await Promise.all([
+    writeAudit(auth.user.email, "create", "quotation", id, quotationNumber),
+    upsertSearchDocument({ entityType: "quotation", entityId: id, title: quotationNumber, subtitle: business.name, searchText: `${quotationNumber} ${business.name} ${cleanText(payload.title, 240)}`, ownerEmail: auth.user.email, updatedAt: now }),
+  ]);
+  return Response.json({ quotationId: id, revisionId, quotation: { id, quotationNumber, businessId, title: cleanText(payload.title, 240) || quotationNumber, status, currency } }, { status: 201 });
+}
+
+function normalizeQuotationLines(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object" && cleanText((entry as Record<string, unknown>).description, 1000))).map((entry) => ({
+    id: cleanText(entry.id, 80) || crypto.randomUUID(),
+    description: cleanText(entry.description, 1000),
+    quantity: entry.quantity,
+    widthCm: entry.widthCm,
+    heightCm: entry.heightCm,
+    unitPrice: entry.unitPrice,
+    location: entry.location,
+  }));
+}
+
+function validYear(value: unknown) {
+  const year = Number(value);
+  return Number.isInteger(year) && year >= 1900 && year <= 9999 ? year : null;
+}
+
+function normalizeQuotationNumber(value: string) {
+  return value.toUpperCase().replace(/\s+/g, "");
+}
+
+function paymentStatus(advance: number, total: number) {
+  if (advance <= 0) return "unpaid";
+  return advance >= total ? "paid" : "partial";
 }

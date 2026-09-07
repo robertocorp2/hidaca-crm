@@ -1,0 +1,8 @@
+{
+  "name": "hidaca-ecf-gateway",
+  "main": "worker/ecf-gateway.ts",
+  "compatibility_date": "2026-08-20",
+  "vars": { "ECF_GATEWAY_ENABLED": "false" },
+  "d1_databases": [{ "binding": "DB", "database_name": "site-creator-d1", "database_id": "REPLACE_WITH_EXISTING_D1_ID", "migrations_dir": "drizzle" }],
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "site-creator-r2" }]
+}

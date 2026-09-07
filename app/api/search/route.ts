@@ -1,4 +1,5 @@
-import { authorizeApi } from "../../lib/authorization";
+import { authorizeApi, can } from "../../lib/authorization";
+import { permissionModules } from "../../lib/modules";
 import { cleanText, searchEntityLabels } from "../../lib/crm";
 import { searchBusinessData } from "../../lib/search";
 
@@ -40,7 +41,10 @@ export async function GET(request: Request) {
   }
 
   try {
-    const results = await searchBusinessData(query, 48);
+    const allowedEntityTypes = permissionModules
+      .filter((module) => can(auth.user, module.key, "view"))
+      .flatMap((module) => [...module.entities]);
+    const results = await searchBusinessData(query, 48, allowedEntityTypes);
     const grouped = new Map<
       string,
       Array<{

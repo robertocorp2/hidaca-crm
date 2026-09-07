@@ -101,7 +101,7 @@ async function duplicateOptions(lead: NonNullable<Awaited<ReturnType<typeof acti
 }
 
 export async function GET(_: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "prospectos", action: "view" });
   if (!auth.ok) return auth.response;
   const { id } = await context.params;
   const lead = await activeLead(id);
@@ -114,11 +114,8 @@ export async function GET(_: Request, context: RouteContext) {
 }
 
 export async function POST(request: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "prospectos", action: "edit" });
   if (!auth.ok) return auth.response;
-  if (auth.user.role === "viewer") {
-    return Response.json({ error: "Acceso de solo lectura." }, { status: 403 });
-  }
 
   const { id } = await context.params;
   const lead = await activeLead(id);

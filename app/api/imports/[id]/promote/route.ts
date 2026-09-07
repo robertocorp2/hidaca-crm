@@ -10,7 +10,7 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const auth = await authorizeInvoiceApi({ write: true, admin: true });
+  const auth = await authorizeInvoiceApi({ module: "importaciones", write: true, admin: true });
   if (!auth.ok) return auth.response;
   if (!isInvoiceProductionImportEnabled(env)) {
     return Response.json(

@@ -4,13 +4,13 @@ import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
-test("cotizaciones replacement is admin-only, row-exact, and limited to its real data source", async () => {
+test("cotizaciones replacement requires administer permission, is row-exact, and is limited to its real data source", async () => {
   const [route, operations, panel] = await Promise.all([
     read("../app/api/cotizaciones/replace/route.ts"),
     read("../app/app/operations-client.tsx"),
     read("../app/app/cotizaciones-replacement-panel.tsx"),
   ]);
-  assert.match(route, /authorizeApi\(true\)/);
+  assert.match(route, /authorizeApi\(\{ module: "cotizaciones", action: "administer" \}\)/);
   assert.match(route, /EXPECTED_COUNT = 133/);
   assert.match(route, /business_records WHERE module = 'cotizaciones'/);
   assert.match(route, /backups\/cotizaciones-business-records/);

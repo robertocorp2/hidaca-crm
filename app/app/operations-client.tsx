@@ -1,6 +1,10 @@
 "use client";
 
 import {
+  Fragment,
+  createContext,
+  useContext,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -12,8 +16,10 @@ import {
 import {
   financialModules,
   isModuleKey,
+  moduleForView,
   modules,
   recordStatuses,
+  type EffectivePermissions,
   type ModuleKey,
 } from "../lib/modules";
 import type { AuthorizedUser } from "../lib/authorization";
@@ -25,16 +31,27 @@ import {
 import { AgendaView } from "./agenda-view";
 import { BusinessesView, ContactsView } from "./entity-views";
 import { BillingView } from "./billing-view";
+import { InvoiceView } from "./invoice-view";
 import { GlobalSearch } from "./global-search";
 import { LeadsView } from "./leads-view";
 import { ImportsView } from "./imports-view";
 import { OpportunitiesView } from "./opportunities-view";
 import { ProjectsView } from "./projects-view";
 import { QuotationsView } from "./quotation-view";
+import { CotizacionesView } from "./cotizaciones-view";
+import { CotizacionSourceDetails } from "./cotizaciones-replacement-panel";
+import { UsersAdminView } from "./users-admin-view";
+import { WhatsAppView } from "./whatsapp-view";
+import { AiCopilotView } from "./ai-copilot-view";
+import { AiSettingsView } from "./ai-settings-view";
+import { RecordAiPanel } from "./record-ai-panel";
 import {
-  CotizacionesReplacementPanel,
-  CotizacionSourceDetails,
-} from "./cotizaciones-replacement-panel";
+  navigationGroups,
+  type NavigationGroup,
+  type NavigationItem,
+  type NavigationView,
+} from "./navigation";
+// CotizacionesView owns the admin-only CotizacionesReplacementPanel while this shell preserves the source detail contract.
 import type {
   ActivityRow,
   BusinessRow,
@@ -49,30 +66,34 @@ import type {
   StaffUser,
 } from "./types";
 import {
+  ActiveFilterChip,
   Empty,
+  AppearancePreferences,
+  AutocompleteInput,
+  ColumnFilterPopover,
+  FilterableStatus,
   Modal,
+  PageHeader,
+  PageSizeControl,
   Pagination,
+  SortHeader,
   dateTime,
   money,
   useFormGuard,
   usePagination,
   useUrlState,
+  useFontPreference,
+  useColumnFilters,
+  type ColumnFilterDefinition,
 } from "./ui";
 
-type View =
-  | "resumen"
-  | ModuleKey
-  | "leads"
-  | "opportunities"
-  | "schedule"
-  | "calendar"
-  | "quotations"
-  | "imports"
-  | "credit-notes"
-  | "receivables"
-  | "collections"
-  | "documentos"
-  | "usuarios";
+type View = NavigationView;
+type ActivityCreateContext = {
+  relatedType: "business" | "contact";
+  relatedId: string;
+};
+
+const PermissionContext = createContext<EffectivePermissions | null>(null);
 
 type SuccessLinks = {
   message: string;
@@ -92,12 +113,28 @@ const emptyRecordForm = {
   notes: "",
 };
 
-const crmModuleKeys = new Set<ModuleKey>([
-  "clientes",
-  "contactos",
-  "proyectos",
-  "ordenes-cambio",
-]);
+const genericStatusLabels: Record<string, string> = {
+  active: "Activo",
+  inactive: "Inactivo",
+  planned: "Planificado",
+  pending: "Pendiente",
+  in_progress: "En progreso",
+  on_hold: "En pausa",
+  completed: "Completado",
+  cancelled: "Cancelado",
+  closed: "Cerrado",
+  draft: "Borrador",
+  sent: "Enviado",
+  approved: "Aprobado",
+  rejected: "Rechazado",
+  paid: "Pagado",
+  overdue: "Vencido",
+};
+
+function displayGenericStatus(value: string) {
+  return genericStatusLabels[value.toLowerCase()] ?? (value || "—");
+}
+
 const invoiceOnlyViews = new Set<View>([
   "credit-notes",
   "receivables",
@@ -117,6 +154,8 @@ export function OperationsClient({
   initialOpportunityHistory,
   initialActivities,
   initialOpportunityQuotes,
+  initialReceivableBalance,
+  initialNow,
   initialView,
   initialRecord,
   invoiceFeatureEnabled,
@@ -134,6 +173,8 @@ export function OperationsClient({
   initialOpportunityHistory: OpportunityHistoryRow[];
   initialActivities: ActivityRow[];
   initialOpportunityQuotes: OpportunityQuoteLink[];
+  initialReceivableBalance: number | null;
+  initialNow: number;
   initialView?: string;
   initialRecord?: string;
   invoiceFeatureEnabled: boolean;
@@ -161,6 +202,9 @@ export function OperationsClient({
   const [opportunityQuotes, setOpportunityQuotes] = useState(
     initialOpportunityQuotes,
   );
+  const [receivableBalance, setReceivableBalance] = useState<number | null>(
+    initialReceivableBalance,
+  );
   const [selectedBusinessId, setSelectedBusinessId] = useState<string | null>(
     requestedInitialView === "clientes" ? requestedInitialRecord : null,
   );
@@ -182,8 +226,19 @@ export function OperationsClient({
       : null,
   );
   const [selectedQuotationId, setSelectedQuotationId] = useState<string | null>(
-    requestedInitialView === "quotations" ? requestedInitialRecord : null,
+    requestedInitialView === "quotations" ||
+      requestedInitialView === "cotizaciones"
+      ? requestedInitialRecord
+      : null,
   );
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(
+    requestedInitialView === "facturas" ? requestedInitialRecord : null,
+  );
+  const [invoiceFromQuotationId, setInvoiceFromQuotationId] = useState<
+    string | null
+  >(null);
+  const [pendingActivityContext, setPendingActivityContext] =
+    useState<ActivityCreateContext | null>(null);
   const [selectedImportId, setSelectedImportId] = useState<string | null>(
     requestedInitialView === "imports" ? requestedInitialRecord : null,
   );
@@ -204,6 +259,11 @@ export function OperationsClient({
       : null,
   );
   const [search, setSearch] = useUrlState("q");
+  const [sort, setSort] = useUrlState("sort", "title");
+  const [direction, setDirection] = useUrlState("dir", "asc");
+  const [recordStatusFilter, setRecordStatusFilter] = useUrlState("status");
+  const [pageSizeValue, setPageSizeValue] = useUrlState("pageSize", "10");
+  const [, setGenericPage] = useUrlState("page", "1");
   const [editing, setEditing] = useState<RecordRow | null>(null);
   const [form, setForm] = useState(emptyRecordForm);
   const [showForm, setShowForm] = useState(false);
@@ -214,30 +274,172 @@ export function OperationsClient({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [drawerNavigation, setDrawerNavigation] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [confirmation, setConfirmation] = useState<{
     message: string;
     confirmLabel: string;
     action: () => Promise<void>;
   } | null>(null);
+  const fontPreference = useFontPreference();
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
-  const canWrite = currentUser.role !== "viewer";
-  const isAdmin = currentUser.role === "admin";
+  const activePermissionModule = moduleForView(view) ?? "inicio";
+  const activePermissions = currentUser.permissions[activePermissionModule];
+  const canWrite = activePermissions.create || activePermissions.edit;
+  const canEcfGenerate = currentUser.permissions.facturas.ecf_generate;
+  const canEcfXml = currentUser.permissions.facturas.ecf_xml;
+  const canCreateInvoice = currentUser.permissions.facturas.create;
+  const isAdmin = currentUser.role === "admin" && activePermissions.administer;
+  const canManageUsers =
+    currentUser.role === "admin" && currentUser.permissions.usuarios.view;
 
-  const visibleRecords = useMemo(() => {
+  const refreshReceivableBalance = useCallback(async () => {
+    if (
+      !invoiceFeatureEnabled ||
+      !currentUser.permissions["cuentas-cobrar"].view
+    ) {
+      return;
+    }
+    const response = await fetch("/api/receivables?summary=1", {
+      cache: "no-store",
+    });
+    if (!response.ok) return;
+    const result = (await response.json()) as { totalBalance?: number };
+    if (typeof result.totalBalance === "number") {
+      setReceivableBalance(result.totalBalance);
+    }
+  }, [currentUser.permissions, invoiceFeatureEnabled]);
+
+  useEffect(() => {
+    if (view === "resumen") void refreshReceivableBalance();
+  }, [refreshReceivableBalance, view]);
+  const visibleNavigationGroups = (
+    navigationGroups as readonly NavigationGroup[]
+  )
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item: NavigationItem) => {
+        if (item.feature === "invoices" && !invoiceFeatureEnabled) return false;
+        if (item.adminOnly && !canManageUsers) return false;
+        const permissionModule = moduleForView(item.view);
+        return (
+          !permissionModule || currentUser.permissions[permissionModule].view
+        );
+      }),
+    }))
+    .filter((group) => group.items.length > 0);
+
+  const baseVisibleRecords = useMemo(() => {
     const term = search.toLowerCase().trim();
     return records.filter((record) => {
       const inView = view === "resumen" || record.module === view;
+      const matchesStatus =
+        !recordStatusFilter || record.status === recordStatusFilter;
       const matches =
         !term ||
         `${record.title} ${record.customerName} ${record.contact} ${record.notes} ${record.metadata}`
           .toLowerCase()
           .includes(term);
-      return inView && matches;
+      return inView && matchesStatus && matches;
     });
-  }, [records, search, view]);
+  }, [recordStatusFilter, records, search, view]);
+  const genericFilterDefinitions = useMemo<ColumnFilterDefinition<RecordRow>[]>(
+    () => [
+      { key: "title", label: "Registro", getValue: (record) => record.title },
+      {
+        key: "customer",
+        label: "Empresa / contacto",
+        getValue: (record) => `${record.customerName} ${record.contact}`,
+      },
+      {
+        key: "amount",
+        label: "Monto mínimo",
+        kind: "number",
+        getValue: (record) => record.amount,
+      },
+      {
+        key: "balance",
+        label: "Balance mínimo",
+        kind: "number",
+        getValue: (record) => record.balance,
+      },
+      {
+        key: "date",
+        label: "Desde fecha",
+        kind: "date",
+        getValue: (record) => record.dueDate ?? record.updatedAt,
+      },
+    ],
+    [],
+  );
+  const {
+    filtered: filteredRecords,
+    values: genericFilterValues,
+    setFilter: setGenericFilter,
+    active: activeGenericFilters,
+    clear: clearGenericFilters,
+  } = useColumnFilters(
+    `records-${view}`,
+    baseVisibleRecords,
+    genericFilterDefinitions,
+  );
+  const visibleRecords = useMemo(() => {
+    const multiplier = direction === "desc" ? -1 : 1;
+    return filteredRecords.toSorted((left, right) => {
+      const leftValue =
+        sort === "status"
+          ? left.status
+          : sort === "customer"
+            ? `${left.customerName} ${left.contact}`
+            : sort === "amount"
+              ? String(left.amount)
+              : sort === "balance"
+                ? String(left.balance)
+                : sort === "date"
+                  ? (left.dueDate ?? left.updatedAt)
+                  : left.title;
+      const rightValue =
+        sort === "status"
+          ? right.status
+          : sort === "customer"
+            ? `${right.customerName} ${right.contact}`
+            : sort === "amount"
+              ? String(right.amount)
+              : sort === "balance"
+                ? String(right.balance)
+                : sort === "date"
+                  ? (right.dueDate ?? right.updatedAt)
+                  : right.title;
+      if (["amount", "balance"].includes(sort))
+        return multiplier * (Number(leftValue) - Number(rightValue));
+      return (
+        multiplier *
+        leftValue.localeCompare(rightValue, "es", { sensitivity: "base" })
+      );
+    });
+  }, [direction, filteredRecords, sort]);
+  const genericStatuses = [
+    ...new Set(
+      records
+        .filter((record) => view === "resumen" || record.module === view)
+        .map((record) => record.status)
+        .filter(Boolean),
+    ),
+  ].sort();
+  const genericPageSize =
+    pageSizeValue === "all"
+      ? Math.max(visibleRecords.length, 1)
+      : Number(pageSizeValue) || 10;
+
+  function sortBy(column: string) {
+    if (sort === column) setDirection(direction === "asc" ? "desc" : "asc");
+    else {
+      setSort(column);
+      setDirection("asc");
+    }
+  }
 
   const totals = useMemo(
     () => ({
@@ -246,9 +448,11 @@ export function OperationsClient({
           record.module === "proyectos" &&
           !["Completado", "Cancelado"].includes(record.status),
       ).length,
-      receivable: records
-        .filter((record) => record.module === "facturas")
-        .reduce((sum, record) => sum + record.balance, 0),
+      receivable:
+        receivableBalance ??
+        records
+          .filter((record) => record.module === "facturas")
+          .reduce((sum, record) => sum + record.balance, 0),
       leads: leads.filter(
         (lead) => !["converted", "unqualified"].includes(lead.status),
       ).length,
@@ -259,10 +463,23 @@ export function OperationsClient({
       upcoming: activities.filter(
         (activity) =>
           activity.status === "planned" &&
-          new Date(activity.endAt).getTime() >= Date.now(),
+          new Date(activity.endAt).getTime() >= initialNow,
+      ).length,
+      overdue: activities.filter(
+        (activity) =>
+          activity.status === "planned" &&
+          new Date(activity.endAt).getTime() < initialNow,
       ).length,
     }),
-    [activities, businesses, leads, opportunities, records],
+    [
+      activities,
+      businesses,
+      leads,
+      opportunities,
+      records,
+      initialNow,
+      receivableBalance,
+    ],
   );
 
   useEffect(() => {
@@ -401,12 +618,16 @@ export function OperationsClient({
     setSelectedOpportunityId(null);
     setSelectedActivityId(null);
     setSelectedQuotationId(null);
+    setSelectedInvoiceId(null);
     setSelectedImportId(null);
     setHighlightRecordId(null);
   }
 
   function applySelection(next: View, record: string | null, push = true) {
     clearSelections();
+    if (next !== "schedule" && next !== "calendar")
+      setPendingActivityContext(null);
+    if (next !== "facturas") setInvoiceFromQuotationId(null);
     setView(next);
     setSearch("");
     setShowForm(false);
@@ -419,7 +640,9 @@ export function OperationsClient({
     else if (next === "opportunities") setSelectedOpportunityId(record);
     else if (next === "schedule" || next === "calendar")
       setSelectedActivityId(record);
-    else if (next === "quotations") setSelectedQuotationId(record);
+    else if (next === "quotations" || next === "cotizaciones")
+      setSelectedQuotationId(record);
+    else if (next === "facturas") setSelectedInvoiceId(record);
     else if (next === "imports") setSelectedImportId(record);
     else if (record) setHighlightRecordId(record);
     if (push) {
@@ -502,6 +725,7 @@ export function OperationsClient({
     setShowForm(false);
     setEditing(null);
     setMessage("Registro guardado.");
+    if (view === "resumen") void refreshReceivableBalance();
   }
 
   async function archiveRecord(record: RecordRow) {
@@ -565,694 +789,815 @@ export function OperationsClient({
     });
   }
 
-  async function addUser(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true);
-    const data = new FormData(event.currentTarget);
-    const response = await fetch("/api/users", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(Object.fromEntries(data)),
-    });
-    const result = (await response.json()) as {
-      user?: StaffUser;
-      error?: string;
-    };
-    setBusy(false);
-    if (!response.ok || !result.user) {
-      setMessage(result.error ?? "No se pudo guardar el usuario.");
-      return;
-    }
-    setUsers([
-      result.user,
-      ...users.filter((item) => item.id !== result.user!.id),
-    ]);
-    event.currentTarget.reset();
-    setMessage("Acceso actualizado.");
-  }
-
-  async function toggleUser(user: StaffUser) {
-    const response = await fetch(`/api/users/${user.id}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ active: !user.active }),
-    });
-    const result = (await response.json()) as {
-      user?: StaffUser;
-      error?: string;
-    };
-    if (!response.ok || !result.user) {
-      setMessage(result.error ?? "No se pudo actualizar el usuario.");
-      return;
-    }
-    setUsers(
-      users.map((item) => (item.id === result.user!.id ? result.user! : item)),
-    );
-  }
-
   const activeModule = modules.find((module) => module.key === view);
-  const operationalModules = modules.filter(
-    (module) => !crmModuleKeys.has(module.key),
+  const allNavigationItems = (
+    navigationGroups as readonly NavigationGroup[]
+  ).flatMap((group) => group.items) as readonly NavigationItem[];
+  const activeNavigationItem = allNavigationItems.find(
+    (item) => item.view === view,
   );
+  // Keep the five mobile shortcuts aligned with the shared permission-filtered registry.
+  const mobileQuickViews: NavigationView[] = [
+    "resumen",
+    "clientes",
+    "cotizaciones",
+    "facturas",
+  ];
 
   return (
-    <div
-      className={
-        sidebarCollapsed ? "app-shell sidebar-collapsed" : "app-shell"
-      }
-    >
-      <a className="skip-link" href="#main-content">
-        Saltar al contenido
-      </a>
-      {confirmation && (
-        <Modal
-          eyebrow="Confirmación requerida"
-          onClose={() => {
-            if (!busy) setConfirmation(null);
-          }}
-          role="alertdialog"
-          title="Confirma la acción"
-        >
-          <p>{confirmation.message}</p>
-          <div className="confirm-actions">
-            <button
-              className="secondary-button"
-              disabled={busy}
-              onClick={() => setConfirmation(null)}
-              type="button"
-            >
-              Cancelar
-            </button>
-            <button
-              className="danger-button"
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                await confirmation.action();
-                setBusy(false);
-                setConfirmation(null);
-              }}
-              type="button"
-            >
-              {busy ? "Procesando…" : confirmation.confirmLabel}
-            </button>
-          </div>
-        </Modal>
-      )}
-      {mobileNav && (
-        <div
-          aria-hidden="true"
-          className="nav-backdrop"
-          onClick={() => setMobileNav(false)}
-        />
-      )}
-      <aside
-        className={mobileNav ? "sidebar sidebar-open" : "sidebar"}
-        ref={sidebarRef}
-      >
-        <div className="sidebar-brand">
-          <span>H</span>
-          <div>
-            <strong>HIDACA</strong>
-            <small>Operaciones</small>
-          </div>
-        </div>
-        <nav aria-label="Módulos">
-          <NavLink
-            active={view === "resumen"}
-            href={viewHref("resumen")}
-            icon="IN"
-            label="Inicio"
-            onClick={(event) => navigateView(event, "resumen")}
-          />
-          <p>CRM</p>
-          <NavLink
-            active={view === "clientes"}
-            href={viewHref("clientes")}
-            icon="EM"
-            label="Empresas"
-            onClick={(event) => navigateView(event, "clientes")}
-          />
-          <NavLink
-            active={view === "contactos"}
-            href={viewHref("contactos")}
-            icon="CO"
-            label="Contactos"
-            onClick={(event) => navigateView(event, "contactos")}
-          />
-          <NavLink
-            active={view === "proyectos"}
-            href={viewHref("proyectos")}
-            icon="PR"
-            label="Proyectos"
-            onClick={(event) => navigateView(event, "proyectos")}
-          />
-          <NavLink
-            active={view === "leads"}
-            href={viewHref("leads")}
-            icon="PS"
-            label="Prospectos"
-            onClick={(event) => navigateView(event, "leads")}
-          />
-          <NavLink
-            active={view === "opportunities"}
-            href={viewHref("opportunities")}
-            icon="OP"
-            label="Oportunidades"
-            onClick={(event) => navigateView(event, "opportunities")}
-          />
-          <NavLink
-            active={view === "ordenes-cambio"}
-            href={viewHref("ordenes-cambio")}
-            icon="CS"
-            label="Casos"
-            onClick={(event) => navigateView(event, "ordenes-cambio")}
-          />
-          <p>Operaciones</p>
-          {operationalModules.map((module) => (
-            <NavLink
-              active={view === module.key}
-              href={viewHref(module.key)}
-              icon={module.icon}
-              key={module.key}
-              label={module.label}
-              onClick={(event) => navigateView(event, module.key)}
-            />
-          ))}
-          {invoiceFeatureEnabled && (
-            <>
-              <p>Facturación y cobros</p>
-              <NavLink
-                active={view === "credit-notes"}
-                href={viewHref("credit-notes")}
-                icon="NC"
-                label="Notas de crédito"
-                onClick={(event) => navigateView(event, "credit-notes")}
-              />
-              <NavLink
-                active={view === "receivables"}
-                href={viewHref("receivables")}
-                icon="CC"
-                label="Cuentas por cobrar"
-                onClick={(event) => navigateView(event, "receivables")}
-              />
-              <NavLink
-                active={view === "collections"}
-                href={viewHref("collections")}
-                icon="CB"
-                label="Cobranza"
-                onClick={(event) => navigateView(event, "collections")}
-              />
-            </>
-          )}
-          <p>Agenda</p>
-          <NavLink
-            active={view === "schedule"}
-            href={viewHref("schedule")}
-            icon="AC"
-            label="Actividades"
-            onClick={(event) => navigateView(event, "schedule")}
-          />
-          <NavLink
-            active={view === "calendar"}
-            href={viewHref("calendar")}
-            icon="CL"
-            label="Calendario"
-            onClick={(event) => navigateView(event, "calendar")}
-          />
-          <p>Archivos y acceso</p>
-          <NavLink
-            active={view === "quotations"}
-            href={viewHref("quotations")}
-            icon="QT"
-            label="Cotizaciones fuente"
-            onClick={(event) => navigateView(event, "quotations")}
-          />
-          <NavLink
-            active={view === "imports"}
-            href={viewHref("imports")}
-            icon="IM"
-            label="Importaciones"
-            onClick={(event) => navigateView(event, "imports")}
-          />
-          <NavLink
-            active={view === "documentos"}
-            href={viewHref("documentos")}
-            icon="DO"
-            label="Documentos"
-            onClick={(event) => navigateView(event, "documentos")}
-          />
-          {isAdmin && (
-            <NavLink
-              active={view === "usuarios"}
-              href={viewHref("usuarios")}
-              icon="US"
-              label="Usuarios"
-              onClick={(event) => navigateView(event, "usuarios")}
-            />
-          )}
-        </nav>
-      </aside>
-
+    <PermissionContext.Provider value={currentUser.permissions}>
       <div
-        aria-hidden={mobileNav ? "true" : undefined}
-        className="app-main"
-        inert={mobileNav}
+        className={
+          sidebarCollapsed ? "app-shell sidebar-collapsed" : "app-shell"
+        }
       >
-        <header className="topbar">
-          <div className="topbar-leading">
-            <button
-              aria-expanded={mobileNav}
-              aria-label={
-                mobileNav
-                  ? "Cerrar navegación"
-                  : drawerNavigation
-                    ? "Abrir navegación"
-                  : sidebarCollapsed
-                    ? "Expandir navegación"
-                    : "Contraer navegación"
-              }
-              className="menu-button"
-              onClick={() => {
-                if (drawerNavigation) {
-                  setMobileNav((value) => !value);
-                } else {
-                  setSidebarCollapsed((value) => !value);
-                }
-              }}
-              ref={menuButtonRef}
-              type="button"
-            >
-              <span aria-hidden="true">☰</span>
-            </button>
-            <DashboardLink
-              className="topbar-brand"
-              href={viewHref("resumen")}
-              onNavigate={() => applySelection("resumen", null)}
-            >
-              <span aria-hidden="true">H</span>
-              <strong>HIDACA</strong>
-            </DashboardLink>
-          </div>
-          <div
-            className={
-              mobileSearchOpen
-                ? "topbar-search topbar-search-open"
-                : "topbar-search"
-            }
+        <a className="skip-link" href="#main-content">
+          Saltar al contenido
+        </a>
+        {confirmation && (
+          <Modal
+            eyebrow="Confirmación requerida"
+            onClose={() => {
+              if (!busy) setConfirmation(null);
+            }}
+            role="alertdialog"
+            title="Confirma la acción"
           >
-            <GlobalSearch
-              onNavigate={(item) => {
-                const next = searchEntityView(item.entityType);
-                applySelection(next, item.entityId);
-                setMobileSearchOpen(false);
-              }}
+            <p>{confirmation.message}</p>
+            <div className="confirm-actions">
+              <button
+                className="secondary-button"
+                disabled={busy}
+                onClick={() => setConfirmation(null)}
+                type="button"
+              >
+                Cancelar
+              </button>
+              <button
+                className="danger-button"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  await confirmation.action();
+                  setBusy(false);
+                  setConfirmation(null);
+                }}
+                type="button"
+              >
+                {busy ? "Procesando…" : confirmation.confirmLabel}
+              </button>
+            </div>
+          </Modal>
+        )}
+        {appearanceOpen && (
+          <Modal
+            eyebrow="Preferencias"
+            onClose={() => setAppearanceOpen(false)}
+            title="Apariencia"
+          >
+            <AppearancePreferences
+              onChange={fontPreference.setValue}
+              onClose={() => setAppearanceOpen(false)}
+              value={fontPreference.value}
             />
+          </Modal>
+        )}
+        {mobileNav && (
+          <div
+            aria-hidden="true"
+            className="nav-backdrop"
+            onClick={() => setMobileNav(false)}
+          />
+        )}
+        <aside
+          className={mobileNav ? "sidebar sidebar-open" : "sidebar"}
+          ref={sidebarRef}
+        >
+          <div className="sidebar-brand">
+            <span>H</span>
+            <div>
+              <strong>HIDACA</strong>
+              <small>Operaciones</small>
+            </div>
           </div>
-          <button
-            aria-expanded={mobileSearchOpen}
-            aria-label={
-              mobileSearchOpen ? "Cerrar búsqueda" : "Abrir búsqueda global"
-            }
-            className="mobile-search-button"
-            onClick={() => setMobileSearchOpen((value) => !value)}
-            type="button"
-          >
-            <span aria-hidden="true">⌕</span>
-          </button>
-          <div className="profile-menu" ref={profileRef}>
+          <nav aria-label="Módulos">
+            {visibleNavigationGroups.map((group) => (
+              <Fragment key={group.key}>
+                {group.label && <p>{group.label}</p>}
+                {group.items.map((item) => (
+                  <NavLink
+                    active={view === item.view}
+                    href={viewHref(item.view)}
+                    icon={item.icon}
+                    key={item.view}
+                    label={item.label}
+                    onClick={(event) => navigateView(event, item.view)}
+                  />
+                ))}
+              </Fragment>
+            ))}
+          </nav>
+        </aside>
+
+        <div
+          aria-hidden={mobileNav ? "true" : undefined}
+          className="app-main"
+          inert={mobileNav}
+        >
+          <header className="topbar">
+            <div className="topbar-leading">
+              <button
+                aria-expanded={mobileNav}
+                aria-label={
+                  mobileNav
+                    ? "Cerrar navegación"
+                    : drawerNavigation
+                      ? "Abrir navegación"
+                      : sidebarCollapsed
+                        ? "Expandir navegación"
+                        : "Contraer navegación"
+                }
+                className="menu-button"
+                onClick={() => {
+                  if (drawerNavigation) {
+                    setMobileNav((value) => !value);
+                  } else {
+                    setSidebarCollapsed((value) => !value);
+                  }
+                }}
+                ref={menuButtonRef}
+                type="button"
+              >
+                <span aria-hidden="true">☰</span>
+              </button>
+              <DashboardLink
+                className="topbar-brand"
+                href={viewHref("resumen")}
+                onNavigate={() => applySelection("resumen", null)}
+              >
+                <span aria-hidden="true">H</span>
+                <strong>HIDACA</strong>
+              </DashboardLink>
+              <span className="mobile-current-module" aria-live="polite">
+                {activeNavigationItem?.label ?? activeModule?.label ?? "HIDACA"}
+              </span>
+            </div>
+            <div
+              className={
+                mobileSearchOpen
+                  ? "topbar-search topbar-search-open"
+                  : "topbar-search"
+              }
+            >
+              <GlobalSearch
+                onNavigate={(item) => {
+                  const next = searchEntityView(item.entityType);
+                  applySelection(next, item.entityId);
+                  setMobileSearchOpen(false);
+                }}
+              />
+            </div>
             <button
-              aria-expanded={profileOpen}
-              aria-haspopup="menu"
-              aria-label={`Perfil de ${currentUser.displayName}`}
-              className="profile-trigger"
-              onClick={() => setProfileOpen((value) => !value)}
+              aria-expanded={mobileSearchOpen}
+              aria-label={
+                mobileSearchOpen ? "Cerrar búsqueda" : "Abrir búsqueda global"
+              }
+              className="mobile-search-button"
+              onClick={() => setMobileSearchOpen((value) => !value)}
               type="button"
             >
-              <span className="profile-avatar" aria-hidden="true">
-                {currentUser.displayName.trim().charAt(0).toUpperCase() || "H"}
-              </span>
-              <span className="user-summary">
-                <strong>{currentUser.displayName}</strong>
-                <small>{roleLabel(currentUser.role)}</small>
-              </span>
-              <span className="profile-chevron" aria-hidden="true">
-                ▾
-              </span>
+              <span aria-hidden="true">⌕</span>
             </button>
-            {profileOpen && (
-              <div className="profile-dropdown" role="menu">
-                <div>
+            <div className="profile-menu" ref={profileRef}>
+              <button
+                aria-expanded={profileOpen}
+                aria-haspopup="menu"
+                aria-label={`Perfil de ${currentUser.displayName}`}
+                className="profile-trigger"
+                onClick={() => setProfileOpen((value) => !value)}
+                type="button"
+              >
+                <span className="profile-avatar" aria-hidden="true">
+                  {currentUser.displayName.trim().charAt(0).toUpperCase() ||
+                    "H"}
+                </span>
+                <span className="user-summary">
                   <strong>{currentUser.displayName}</strong>
                   <small>{roleLabel(currentUser.role)}</small>
+                </span>
+                <span className="profile-chevron" aria-hidden="true">
+                  ▾
+                </span>
+              </button>
+              {profileOpen && (
+                <div className="profile-dropdown" role="menu">
+                  <div>
+                    <strong>{currentUser.displayName}</strong>
+                    <small>{roleLabel(currentUser.role)}</small>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setAppearanceOpen(true);
+                      setProfileOpen(false);
+                    }}
+                    role="menuitem"
+                    type="button"
+                  >
+                    Preferencias de apariencia
+                  </button>
+                  <a href={signOutHref} role="menuitem">
+                    Cerrar sesión
+                  </a>
                 </div>
-                <a href={signOutHref} role="menuitem">
-                  Cerrar sesión
-                </a>
+              )}
+            </div>
+          </header>
+
+          <main className="workspace" id="main-content" tabIndex={-1}>
+            {message && (
+              <div className="flash" role="status">
+                {message}
               </div>
             )}
-          </div>
-        </header>
-
-        <main className="workspace" id="main-content" tabIndex={-1}>
-          {message && (
-            <div className="flash" role="status">
-              {message}
-            </div>
-          )}
-          {successLinks && (
-            <div className="flash action-flash" role="status">
-              <span>{successLinks.message}</span>
-              <div>
-                <a
-                  href={`${viewHref("clientes")}&record=${encodeURIComponent(successLinks.businessId)}`}
-                  onClick={(event) =>
-                    navigateView(event, "clientes", successLinks.businessId)
-                  }
-                >
-                  Abrir empresa
-                </a>
-                <a
-                  href={`${viewHref("contactos")}&record=${encodeURIComponent(successLinks.contactId)}`}
-                  onClick={(event) =>
-                    navigateView(event, "contactos", successLinks.contactId)
-                  }
-                >
-                  Abrir contacto
-                </a>
-                <a
-                  href={`${viewHref("opportunities")}&record=${encodeURIComponent(successLinks.opportunityId)}`}
-                  onClick={(event) =>
-                    navigateView(
-                      event,
-                      "opportunities",
-                      successLinks.opportunityId,
-                    )
-                  }
-                >
-                  Abrir oportunidad
-                </a>
-              </div>
-            </div>
-          )}
-          {view === "resumen" ? (
-            <Dashboard
-              activities={activities}
-              businesses={businesses}
-              leads={leads}
-              opportunities={opportunities}
-              records={records}
-              totals={totals}
-              onNavigate={(next, record) => {
-                if (record) applySelection(next, record);
-                else selectView(next);
-              }}
-            />
-          ) : view === "clientes" ? (
-            <BusinessesView
-              activities={activities}
-              businesses={businesses}
-              canWrite={canWrite}
-              currentUserEmail={currentUser.email}
-              onOpenActivity={(id) => applySelection("schedule", id)}
-              selectedId={selectedBusinessId}
-              setBusinesses={setBusinesses}
-              setMessage={setMessage}
-              setSelectedId={(id) => {
-                setSelectedBusinessId(id);
-                if (id)
-                  window.history.pushState(
-                    {},
-                    "",
-                    `/app?view=businesses&record=${encodeURIComponent(id)}`,
-                  );
-              }}
-            />
-          ) : view === "contactos" ? (
-            <ContactsView
-              activities={activities}
-              businesses={businesses}
-              canWrite={canWrite}
-              contacts={contacts}
-              currentUserEmail={currentUser.email}
-              onOpenActivity={(id) => applySelection("schedule", id)}
-              selectedId={selectedContactId}
-              setContacts={setContacts}
-              setMessage={setMessage}
-              setSelectedId={(id) => {
-                setSelectedContactId(id);
-                if (id)
-                  window.history.pushState(
-                    {},
-                    "",
-                    `/app?view=contacts&record=${encodeURIComponent(id)}`,
-                  );
-              }}
-            />
-          ) : view === "proyectos" ? (
-            <ProjectsView
-              businesses={businesses}
-              canWrite={canWrite}
-              contacts={contacts}
-              currentUserEmail={currentUser.email}
-              selectedId={selectedProjectId}
-              setMessage={setMessage}
-              setSelectedId={(id) => {
-                setSelectedProjectId(id);
-                if (id) {
-                  window.history.pushState(
-                    {},
-                    "",
-                    `/app?view=projects&record=${encodeURIComponent(id)}`,
-                  );
-                }
-              }}
-            />
-          ) : view === "leads" ? (
-            <LeadsView
-              activities={activities}
-              businesses={businesses}
-              canWrite={canWrite}
-              contacts={contacts}
-              currentUserEmail={currentUser.email}
-              history={leadHistory}
-              isAdmin={isAdmin}
-              leads={leads}
-              onConverted={(result) => {
-                if (!businesses.some((item) => item.id === result.business.id))
-                  setBusinesses([result.business, ...businesses]);
-                if (!contacts.some((item) => item.id === result.contact.id))
-                  setContacts([result.contact, ...contacts]);
-                setOpportunities([result.opportunity, ...opportunities]);
-                setSuccessLinks({
-                  message:
-                    "Lead converted successfully. Business, Contact, and Opportunity are linked.",
-                  businessId: result.business.id,
-                  contactId: result.contact.id,
-                  opportunityId: result.opportunity.id,
-                });
-                setMessage("");
-                applySelection("opportunities", result.opportunity.id);
-              }}
-              onOpenActivity={(id) => applySelection("schedule", id)}
-              selectedId={selectedLeadId}
-              setHistory={setLeadHistory}
-              setLeads={setLeads}
-              setMessage={setMessage}
-              setSelectedId={(id) => {
-                setSelectedLeadId(id);
-                if (id)
-                  window.history.pushState(
-                    {},
-                    "",
-                    `/app?view=leads&record=${encodeURIComponent(id)}`,
-                  );
-              }}
-            />
-          ) : view === "opportunities" ? (
-            <OpportunitiesView
-              activities={activities}
-              businesses={businesses}
-              canWrite={canWrite}
-              contacts={contacts}
-              currentUserEmail={currentUser.email}
-              history={opportunityHistory}
-              isAdmin={isAdmin}
-              onOpenActivity={(id) => applySelection("schedule", id)}
-              opportunities={opportunities}
-              quoteLinks={opportunityQuotes}
-              records={records}
-              selectedId={selectedOpportunityId}
-              setHistory={setOpportunityHistory}
-              setMessage={setMessage}
-              setOpportunities={setOpportunities}
-              setQuoteLinks={setOpportunityQuotes}
-              setRecords={setRecords}
-              setSelectedId={(id) => {
-                setSelectedOpportunityId(id);
-                if (id)
-                  window.history.pushState(
-                    {},
-                    "",
-                    `/app?view=opportunities&record=${encodeURIComponent(id)}`,
-                  );
-              }}
-            />
-          ) : view === "schedule" || view === "calendar" ? (
-            <AgendaView
-              activities={activities}
-              businesses={businesses}
-              canWrite={canWrite}
-              contacts={contacts}
-              currentUserEmail={currentUser.email}
-              leads={leads}
-              mode={view}
-              opportunities={opportunities}
-              records={records}
-              selectedId={selectedActivityId}
-              setActivities={setActivities}
-              setMessage={setMessage}
-              setSelectedId={(id) => {
-                setSelectedActivityId(id);
-                if (id)
-                  window.history.pushState(
-                    {},
-                    "",
-                    `/app?view=${view}&record=${encodeURIComponent(id)}`,
-                  );
-              }}
-            />
-          ) : view === "quotations" ? (
-            <QuotationsView
-              businesses={businesses}
-              canWrite={canWrite}
-              contacts={contacts}
-              selectedId={selectedQuotationId}
-              setMessage={setMessage}
-              setSelectedId={(id) => {
-                setSelectedQuotationId(id);
-                if (id) {
-                  window.history.pushState(
-                    {},
-                    "",
-                    `/app?view=quotations&record=${encodeURIComponent(id)}`,
-                  );
-                }
-              }}
-            />
-          ) : view === "imports" ? (
-            <ImportsView
-              canWrite={canWrite}
-              isAdmin={isAdmin}
-              onAccepted={(links) => {
-                setMessage(
-                  "Importación aceptada; los registros se crearon de forma atómica.",
-                );
-                if (links.quotationId) {
-                  applySelection("quotations", links.quotationId);
-                } else {
-                  setSelectedImportId(null);
-                }
-              }}
-              selectedId={selectedImportId}
-              setMessage={setMessage}
-              setSelectedId={(id) => {
-                setSelectedImportId(id);
-                if (id) {
-                  window.history.pushState(
-                    {},
-                    "",
-                    `/app?view=imports&record=${encodeURIComponent(id)}`,
-                  );
-                }
-              }}
-            />
-          ) : invoiceFeatureEnabled &&
-            (view === "facturas" ||
-              view === "pagos" ||
-              view === "credit-notes" ||
-              view === "receivables" ||
-              view === "collections") ? (
-            <BillingView
-              businesses={businesses}
-              canWrite={canWrite}
-              currentUserEmail={currentUser.email}
-              mode={view}
-              setMessage={setMessage}
-            />
-          ) : view === "documentos" ? (
-            <DocumentsView
-              busy={busy}
-              canWrite={canWrite}
-              documents={documents}
-              highlightId={highlightRecordId}
-              onDelete={deleteDocument}
-              onUpload={uploadDocument}
-              records={records}
-            />
-          ) : view === "usuarios" ? (
-            <UsersView
-              busy={busy}
-              onAdd={addUser}
-              onToggle={toggleUser}
-              users={users}
-            />
-          ) : (
-            <>
-              <div className="breadcrumbs">
-                <span>Inicio</span>
-                <i>/</i>
-                <span aria-current="page">{activeModule?.label}</span>
-              </div>
-              <div className="page-heading">
+            {successLinks && (
+              <div className="flash action-flash" role="status">
+                <span>{successLinks.message}</span>
                 <div>
-                  <p className="eyebrow">Gestión</p>
-                  <h1>{activeModule?.label}</h1>
-                  <p>Consulta, registra y actualiza información.</p>
+                  <a
+                    href={`${viewHref("clientes")}&record=${encodeURIComponent(successLinks.businessId)}`}
+                    onClick={(event) =>
+                      navigateView(event, "clientes", successLinks.businessId)
+                    }
+                  >
+                    Abrir empresa
+                  </a>
+                  <a
+                    href={`${viewHref("contactos")}&record=${encodeURIComponent(successLinks.contactId)}`}
+                    onClick={(event) =>
+                      navigateView(event, "contactos", successLinks.contactId)
+                    }
+                  >
+                    Abrir contacto
+                  </a>
+                  <a
+                    href={`${viewHref("opportunities")}&record=${encodeURIComponent(successLinks.opportunityId)}`}
+                    onClick={(event) =>
+                      navigateView(
+                        event,
+                        "opportunities",
+                        successLinks.opportunityId,
+                      )
+                    }
+                  >
+                    Abrir oportunidad
+                  </a>
                 </div>
-                {canWrite && (
-                  <button className="primary-button" onClick={openCreate}>
-                    Nuevo registro
-                  </button>
+              </div>
+            )}
+            {view === "resumen" ? (
+              <Dashboard
+                activities={activities}
+                businesses={businesses}
+                leads={leads}
+                opportunities={opportunities}
+                records={records}
+                totals={totals}
+                initialNow={initialNow}
+                onNavigate={(next, record) => {
+                  if (record) applySelection(next, record);
+                  else selectView(next);
+                }}
+              />
+            ) : view === "clientes" ? (
+              <BusinessesView
+                activities={activities}
+                businesses={businesses}
+                canCreateActivity={currentUser.permissions.agenda.create}
+                canAskAi={currentUser.permissions.ai.view}
+                canProposeAi={currentUser.permissions.ai.create}
+                canApproveAi={currentUser.permissions.ai.approve}
+                canViewActivity={currentUser.permissions.agenda.view}
+                canWrite={canWrite}
+                currentUserEmail={currentUser.email}
+                confirm={(message, confirmLabel, action) =>
+                  setConfirmation({ message, confirmLabel, action })
+                }
+                onNavigate={(next, record) => {
+                  if (record) applySelection(next as View, record);
+                  else selectView(next as View);
+                }}
+                onOpenActivity={(id) => applySelection("schedule", id)}
+                onCreateActivity={(relatedType, relatedId) => {
+                  setPendingActivityContext({ relatedType, relatedId });
+                  applySelection("schedule", null);
+                }}
+                selectedId={selectedBusinessId}
+                setBusinesses={setBusinesses}
+                setMessage={setMessage}
+                setSelectedId={(id) => {
+                  setSelectedBusinessId(id);
+                  if (id)
+                    window.history.pushState(
+                      {},
+                      "",
+                      `/app?view=businesses&record=${encodeURIComponent(id)}`,
+                    );
+                }}
+              />
+            ) : view === "contactos" ? (
+              <ContactsView
+                activities={activities}
+                businesses={businesses}
+                canCreateActivity={currentUser.permissions.agenda.create}
+                canAskAi={currentUser.permissions.ai.view}
+                canProposeAi={currentUser.permissions.ai.create}
+                canApproveAi={currentUser.permissions.ai.approve}
+                canViewActivity={currentUser.permissions.agenda.view}
+                canWrite={canWrite}
+                contacts={contacts}
+                currentUserEmail={currentUser.email}
+                confirm={(message, confirmLabel, action) =>
+                  setConfirmation({ message, confirmLabel, action })
+                }
+                onNavigate={(next, record) => {
+                  if (record) applySelection(next as View, record);
+                  else selectView(next as View);
+                }}
+                onOpenActivity={(id) => applySelection("schedule", id)}
+                onCreateActivity={(relatedType, relatedId) => {
+                  setPendingActivityContext({ relatedType, relatedId });
+                  applySelection("schedule", null);
+                }}
+                selectedId={selectedContactId}
+                setContacts={setContacts}
+                setMessage={setMessage}
+                setSelectedId={(id) => {
+                  setSelectedContactId(id);
+                  if (id)
+                    window.history.pushState(
+                      {},
+                      "",
+                      `/app?view=contacts&record=${encodeURIComponent(id)}`,
+                    );
+                }}
+              />
+            ) : view === "proyectos" ? (
+              <ProjectsView
+                businesses={businesses}
+                canWrite={canWrite}
+                canAskAi={currentUser.permissions.ai.view}
+                canProposeAi={
+                  currentUser.permissions.ai.create &&
+                  currentUser.permissions.agenda.create
+                }
+                canApproveAi={currentUser.permissions.ai.approve}
+                contacts={contacts}
+                currentUserEmail={currentUser.email}
+                selectedId={selectedProjectId}
+                setMessage={setMessage}
+                setSelectedId={(id) => {
+                  setSelectedProjectId(id);
+                  if (id) {
+                    window.history.pushState(
+                      {},
+                      "",
+                      `/app?view=projects&record=${encodeURIComponent(id)}`,
+                    );
+                  }
+                }}
+              />
+            ) : view === "leads" ? (
+              <LeadsView
+                activities={activities}
+                businesses={businesses}
+                canWrite={canWrite}
+                canAskAi={currentUser.permissions.ai.view}
+                canProposeAi={
+                  currentUser.permissions.ai.create &&
+                  currentUser.permissions.agenda.create
+                }
+                canApproveAi={currentUser.permissions.ai.approve}
+                contacts={contacts}
+                currentUserEmail={currentUser.email}
+                history={leadHistory}
+                isAdmin={isAdmin}
+                leads={leads}
+                onConverted={(result) => {
+                  if (
+                    !businesses.some((item) => item.id === result.business.id)
+                  )
+                    setBusinesses([result.business, ...businesses]);
+                  if (!contacts.some((item) => item.id === result.contact.id))
+                    setContacts([result.contact, ...contacts]);
+                  setOpportunities([result.opportunity, ...opportunities]);
+                  setSuccessLinks({
+                    message:
+                      "Lead converted successfully. Business, Contact, and Opportunity are linked.",
+                    businessId: result.business.id,
+                    contactId: result.contact.id,
+                    opportunityId: result.opportunity.id,
+                  });
+                  setMessage("");
+                  applySelection("opportunities", result.opportunity.id);
+                }}
+                onOpenActivity={(id) => applySelection("schedule", id)}
+                selectedId={selectedLeadId}
+                setHistory={setLeadHistory}
+                setLeads={setLeads}
+                setMessage={setMessage}
+                setSelectedId={(id) => {
+                  setSelectedLeadId(id);
+                  if (id)
+                    window.history.pushState(
+                      {},
+                      "",
+                      `/app?view=leads&record=${encodeURIComponent(id)}`,
+                    );
+                }}
+              />
+            ) : view === "opportunities" ? (
+              <OpportunitiesView
+                activities={activities}
+                businesses={businesses}
+                canWrite={canWrite}
+                canAskAi={currentUser.permissions.ai.view}
+                canProposeAi={
+                  currentUser.permissions.ai.create &&
+                  currentUser.permissions.agenda.create
+                }
+                canApproveAi={currentUser.permissions.ai.approve}
+                contacts={contacts}
+                currentUserEmail={currentUser.email}
+                history={opportunityHistory}
+                isAdmin={isAdmin}
+                onOpenActivity={(id) => applySelection("schedule", id)}
+                opportunities={opportunities}
+                quoteLinks={opportunityQuotes}
+                records={records}
+                selectedId={selectedOpportunityId}
+                setHistory={setOpportunityHistory}
+                setMessage={setMessage}
+                setOpportunities={setOpportunities}
+                setQuoteLinks={setOpportunityQuotes}
+                setRecords={setRecords}
+                setSelectedId={(id) => {
+                  setSelectedOpportunityId(id);
+                  if (id)
+                    window.history.pushState(
+                      {},
+                      "",
+                      `/app?view=opportunities&record=${encodeURIComponent(id)}`,
+                    );
+                }}
+              />
+            ) : view === "schedule" || view === "calendar" ? (
+              <AgendaView
+                activities={activities}
+                businesses={businesses}
+                canWrite={canWrite}
+                contacts={contacts}
+                currentUserEmail={currentUser.email}
+                initialCreateContext={pendingActivityContext}
+                leads={leads}
+                mode={view}
+                opportunities={opportunities}
+                records={records}
+                selectedId={selectedActivityId}
+                setActivities={setActivities}
+                setMessage={setMessage}
+                onCreateContextConsumed={() => setPendingActivityContext(null)}
+                setSelectedId={(id) => {
+                  setSelectedActivityId(id);
+                  if (id)
+                    window.history.pushState(
+                      {},
+                      "",
+                      `/app?view=${view}&record=${encodeURIComponent(id)}`,
+                    );
+                }}
+              />
+            ) : view === "quotations" ? (
+              <QuotationsView
+                businesses={businesses}
+                canWrite={canWrite}
+                contacts={contacts}
+                selectedId={selectedQuotationId}
+                setMessage={setMessage}
+                setSelectedId={(id) => {
+                  setSelectedQuotationId(id);
+                  if (id) {
+                    window.history.pushState(
+                      {},
+                      "",
+                      `/app?view=quotations&record=${encodeURIComponent(id)}`,
+                    );
+                  }
+                }}
+              />
+            ) : view === "imports" ? (
+              <ImportsView
+                canWrite={canWrite}
+                isAdmin={isAdmin}
+                onAccepted={(links) => {
+                  setMessage(
+                    "Importación aceptada; los registros se crearon de forma atómica.",
+                  );
+                  if (links.quotationId) {
+                    applySelection("quotations", links.quotationId);
+                  } else {
+                    setSelectedImportId(null);
+                  }
+                }}
+                selectedId={selectedImportId}
+                setMessage={setMessage}
+                setSelectedId={(id) => {
+                  setSelectedImportId(id);
+                  if (id) {
+                    window.history.pushState(
+                      {},
+                      "",
+                      `/app?view=imports&record=${encodeURIComponent(id)}`,
+                    );
+                  }
+                }}
+              />
+            ) : view === "cotizaciones" ? (
+              <CotizacionesView
+                businesses={businesses}
+                canWrite={canWrite}
+                canAskAi={currentUser.permissions.ai.view}
+                canProposeAi={
+                  currentUser.permissions.ai.create &&
+                  currentUser.permissions.agenda.create
+                }
+                canApproveAi={currentUser.permissions.ai.approve}
+                canCreateInvoice={canCreateInvoice}
+                contacts={contacts}
+                isAdmin={isAdmin}
+                legacyRecords={records.filter(
+                  (record) => record.module === "cotizaciones",
                 )}
-              </div>
-              {view === "cotizaciones" && isAdmin && (
-                <CotizacionesReplacementPanel />
-              )}
-              <div className="toolbar">
-                <input
-                  aria-label="Buscar registros"
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Buscar por título, empresa o contacto…"
-                  value={search}
+                onLegacyArchived={(id) =>
+                  setRecords((current) =>
+                    current.filter((record) => record.id !== id),
+                  )
+                }
+                onLegacyUpdated={(record) =>
+                  setRecords((current) =>
+                    current.map((item) =>
+                      item.id === record.id ? record : item,
+                    ),
+                  )
+                }
+                onCreateInvoice={(quotationId) => {
+                  setInvoiceFromQuotationId(quotationId);
+                  applySelection("facturas", null);
+                }}
+                onOpenInvoice={(invoiceId) =>
+                  applySelection("facturas", invoiceId)
+                }
+                selectedId={selectedQuotationId}
+                setMessage={setMessage}
+                setSelectedId={(id) => {
+                  setSelectedQuotationId(id);
+                  const params = new URLSearchParams();
+                  params.set("view", "cotizaciones");
+                  if (id) params.set("record", id);
+                  window.history.pushState({}, "", `/app?${params}`);
+                  window.dispatchEvent(new Event("hidaca:urlstate"));
+                }}
+              />
+            ) : invoiceFeatureEnabled && view === "facturas" ? (
+              <InvoiceView
+                businesses={businesses}
+                canWrite={canWrite}
+                canAskAi={currentUser.permissions.ai.view}
+                canProposeAi={
+                  currentUser.permissions.ai.create &&
+                  currentUser.permissions.agenda.create
+                }
+                canApproveAi={currentUser.permissions.ai.approve}
+                canEcfGenerate={canEcfGenerate}
+                canEcfXml={canEcfXml}
+                fromQuotationId={invoiceFromQuotationId}
+                onNavigate={(next, id) => applySelection(next as View, id)}
+                selectedId={selectedInvoiceId}
+                setSelectedId={(id) => {
+                  setSelectedInvoiceId(id);
+                  const params = new URLSearchParams();
+                  params.set("view", "facturas");
+                  if (id) params.set("record", id);
+                  window.history.pushState({}, "", `/app?${params}`);
+                  window.dispatchEvent(new Event("hidaca:urlstate"));
+                }}
+                setMessage={setMessage}
+              />
+            ) : invoiceFeatureEnabled &&
+              (view === "pagos" ||
+                view === "credit-notes" ||
+                view === "receivables" ||
+                view === "collections") ? (
+              <BillingView
+                businesses={businesses}
+                canWrite={canWrite}
+                currentUserEmail={currentUser.email}
+                mode={view}
+                setMessage={setMessage}
+              />
+            ) : view === "documentos" ? (
+              <DocumentsView
+                busy={busy}
+                canWrite={canWrite}
+                documents={documents}
+                highlightId={highlightRecordId}
+                onDelete={deleteDocument}
+                onUpload={uploadDocument}
+                records={records}
+              />
+            ) : view === "usuarios" ? (
+              <UsersAdminView
+                access={currentUser.permissions.usuarios}
+                currentUserEmail={currentUser.email}
+                confirm={(message, confirmLabel, action) =>
+                  setConfirmation({ message, confirmLabel, action })
+                }
+                setMessage={setMessage}
+                setUsers={setUsers}
+                users={users}
+              />
+            ) : view === "whatsapp" ? (
+              <WhatsAppView
+                canWrite={currentUser.permissions.whatsapp.create}
+                isAdmin={isAdmin}
+              />
+            ) : view === "ai" ? (
+              <AiCopilotView
+                canApprove={currentUser.permissions.ai.approve}
+                canCreate={
+                  currentUser.permissions.ai.create &&
+                  currentUser.permissions.agenda.create
+                }
+                isAdmin={isAdmin}
+              />
+            ) : view === "ai-settings" ? (
+              <AiSettingsView />
+            ) : (
+              <>
+                <div className="breadcrumbs">
+                  <span>Inicio</span>
+                  <i>/</i>
+                  <span aria-current="page">{activeModule?.label}</span>
+                </div>
+                <PageHeader
+                  action={
+                    canWrite ? (
+                      <button className="primary-button" onClick={openCreate}>
+                        Nuevo registro
+                      </button>
+                    ) : undefined
+                  }
+                  description="Consulta, registra y actualiza información."
+                  eyebrow="Gestión"
+                  title={activeModule?.label ?? "Registros"}
                 />
-                <span>{visibleRecords.length} registros</span>
-              </div>
-              {showForm && (
-                <RecordForm
-                  busy={busy}
-                  editing={Boolean(editing)}
-                  financial={financialModules.has(view as ModuleKey)}
-                  form={form}
-                  onCancel={() => setShowForm(false)}
-                  onSubmit={saveRecord}
-                  setForm={setForm}
-                />
-              )}
-              <section className="panel">
-                <RecordsTable
-                  canWrite={canWrite}
-                  highlightId={highlightRecordId}
-                  onArchive={archiveRecord}
-                  onEdit={openEdit}
-                  records={visibleRecords}
-                />
-              </section>
-            </>
-          )}
-        </main>
+                <div className="toolbar toolbar-filters">
+                  <AutocompleteInput
+                    ariaLabel={`Buscar en ${activeModule?.label ?? "registros"}`}
+                    onChange={(value) => {
+                      setSearch(value);
+                      setGenericPage("1");
+                    }}
+                    onSelect={(option) => {
+                      setSearch(option.label);
+                      setGenericPage("1");
+                    }}
+                    options={visibleRecords.slice(0, 8).map((record) => ({
+                      id: record.id,
+                      label: record.title,
+                      secondary: record.customerName || record.contact,
+                    }))}
+                    placeholder="Escribe un título, empresa o contacto…"
+                    value={search}
+                  />
+                  <select
+                    aria-label="Filtrar por estado"
+                    onChange={(event) => {
+                      setRecordStatusFilter(event.target.value);
+                      setGenericPage("1");
+                    }}
+                    value={recordStatusFilter}
+                  >
+                    <option value="">Todos los estados</option>
+                    {genericStatuses.map((status) => (
+                      <option key={status} value={status}>
+                        {displayGenericStatus(status)}
+                      </option>
+                    ))}
+                  </select>
+                  <PageSizeControl
+                    label="Registros por página"
+                    onChange={(value) => {
+                      setPageSizeValue(value);
+                      setGenericPage("1");
+                    }}
+                    value={pageSizeValue}
+                  />
+                  <span className="record-count">
+                    <strong>{visibleRecords.length}</strong> registros
+                  </span>
+                </div>
+                {(recordStatusFilter || activeGenericFilters.length > 0) && (
+                  <div className="active-filter-row">
+                    {recordStatusFilter && (
+                      <ActiveFilterChip
+                        label={`Estado: ${displayGenericStatus(recordStatusFilter)}`}
+                        onClear={() => {
+                          setRecordStatusFilter("");
+                          setGenericPage("1");
+                        }}
+                      />
+                    )}
+                    {activeGenericFilters.map(([key, value]) => (
+                      <ActiveFilterChip
+                        key={key}
+                        label={`${genericFilterDefinitions.find((definition) => definition.key === key)?.label ?? key}: ${value}`}
+                        onClear={() => {
+                          setGenericFilter(key, "");
+                          setGenericPage("1");
+                        }}
+                      />
+                    ))}
+                    {activeGenericFilters.length > 1 && (
+                      <button
+                        className="text-button"
+                        onClick={() => {
+                          clearGenericFilters();
+                          setGenericPage("1");
+                        }}
+                        type="button"
+                      >
+                        Limpiar filtros
+                      </button>
+                    )}
+                  </div>
+                )}
+                {showForm && (
+                  <Modal
+                    onClose={() => setShowForm(false)}
+                    title={editing ? "Editar registro" : "Nuevo registro"}
+                    wide
+                  >
+                    <RecordForm
+                      busy={busy}
+                      financial={financialModules.has(view as ModuleKey)}
+                      form={form}
+                      onCancel={() => setShowForm(false)}
+                      onSubmit={saveRecord}
+                      setForm={setForm}
+                    />
+                  </Modal>
+                )}
+                <section className="panel">
+                  <RecordsTable
+                    canWrite={canWrite}
+                    canAskAi={currentUser.permissions.ai.view}
+                    canProposeAi={
+                      currentUser.permissions.ai.create &&
+                      currentUser.permissions.agenda.create
+                    }
+                    canApproveAi={currentUser.permissions.ai.approve}
+                    highlightId={highlightRecordId}
+                    onArchive={archiveRecord}
+                    onEdit={openEdit}
+                    direction={direction as "asc" | "desc"}
+                    onStatusFilter={(status) => {
+                      setRecordStatusFilter(status);
+                      setGenericPage("1");
+                    }}
+                    onSort={sortBy}
+                    pageSize={genericPageSize}
+                    sort={sort}
+                    records={visibleRecords}
+                    filterDefinitions={genericFilterDefinitions}
+                    filterValues={genericFilterValues}
+                    onColumnFilter={(key, value) => {
+                      setGenericFilter(key, value);
+                      setGenericPage("1");
+                    }}
+                  />
+                </section>
+              </>
+            )}
+          </main>
+        </div>
+        <MobileBottomNav
+          currentView={view}
+          items={mobileQuickViews}
+          onMore={() => setMobileNav(true)}
+          onNavigate={(next) => selectView(next)}
+        />
       </div>
-    </div>
+    </PermissionContext.Provider>
   );
 }
 
@@ -1265,19 +1610,93 @@ function NavLink({
 }: {
   active: boolean;
   href: string;
-  icon: string;
+  icon: NavigationItem["icon"];
   label: string;
   onClick(event: ReactMouseEvent<HTMLAnchorElement>): void;
 }) {
+  const permissions = useContext(PermissionContext);
+  const requested = parseView(
+    new URL(href, "https://hidaca.local").searchParams.get("view"),
+  );
+  const permissionModule = moduleForView(requested);
+  if (permissions && permissionModule && !permissions[permissionModule].view)
+    return null;
+  const Icon = icon;
   return (
     <a
+      aria-label={label}
       aria-current={active ? "page" : undefined}
       className={active ? "active" : ""}
       href={href}
       onClick={onClick}
     >
-      <span>{icon}</span> {label}
+      <span aria-hidden="true" className="sidebar-nav-icon">
+        <Icon focusable="false" size={18} strokeWidth={2} />
+      </span>
+      <span className="sidebar-nav-label">{label}</span>
     </a>
+  );
+}
+
+function MobileBottomNav({
+  currentView,
+  items,
+  onMore,
+  onNavigate,
+}: {
+  currentView: NavigationView;
+  items: readonly NavigationView[];
+  onMore(): void;
+  onNavigate(view: NavigationView): void;
+}) {
+  const permissions = useContext(PermissionContext);
+  const allNavigationItems = (
+    navigationGroups as readonly NavigationGroup[]
+  ).flatMap((group) => group.items) as readonly NavigationItem[];
+  const destinations = items
+    .map((view) => allNavigationItems.find((item) => item.view === view))
+    .filter((item): item is NavigationItem => Boolean(item))
+    .filter((item) => {
+      const permissionModule = moduleForView(item.view);
+      return (
+        !permissions || !permissionModule || permissions[permissionModule].view
+      );
+    });
+
+  return (
+    <nav aria-label="Accesos móviles" className="mobile-bottom-nav">
+      {destinations.map((item) => {
+        const Icon = item.icon;
+        return (
+          <a
+            aria-current={currentView === item.view ? "page" : undefined}
+            aria-label={item.label}
+            className={currentView === item.view ? "active" : undefined}
+            href={viewHref(item.view)}
+            key={item.view}
+            onClick={(event) => {
+              if (isModifiedClick(event)) return;
+              event.preventDefault();
+              onNavigate(item.view);
+            }}
+          >
+            <Icon
+              aria-hidden="true"
+              focusable="false"
+              size={19}
+              strokeWidth={2}
+            />
+            <span>{item.label}</span>
+          </a>
+        );
+      })}
+      <button aria-label="Más módulos" onClick={onMore} type="button">
+        <span aria-hidden="true" className="mobile-bottom-more-icon">
+          ⋯
+        </span>
+        <span>Más</span>
+      </button>
+    </nav>
   );
 }
 
@@ -1292,6 +1711,13 @@ function DashboardLink({
   href: string;
   onNavigate(): void;
 }) {
+  const permissions = useContext(PermissionContext);
+  const requested = parseView(
+    new URL(href, "https://hidaca.local").searchParams.get("view"),
+  );
+  const permissionModule = moduleForView(requested);
+  if (permissions && permissionModule && !permissions[permissionModule].view)
+    return null;
   return (
     <a
       className={className}
@@ -1315,6 +1741,7 @@ function Dashboard({
   activities,
   businesses,
   onNavigate,
+  initialNow,
 }: {
   totals: {
     projects: number;
@@ -1323,6 +1750,7 @@ function Dashboard({
     opportunities: number;
     businesses: number;
     upcoming: number;
+    overdue: number;
   };
   records: RecordRow[];
   leads: LeadRow[];
@@ -1330,12 +1758,28 @@ function Dashboard({
   activities: ActivityRow[];
   businesses: BusinessRow[];
   onNavigate(view: View, record?: string): void;
+  initialNow: number;
 }) {
   const upcomingActivities = activities
-    .filter((activity) => activity.status === "planned")
+    .filter(
+      (activity) =>
+        activity.status === "planned" &&
+        new Date(activity.endAt).getTime() >= initialNow,
+    )
     .sort(
       (first, second) =>
         new Date(first.startAt).getTime() - new Date(second.startAt).getTime(),
+    )
+    .slice(0, 6);
+  const overdueActivities = activities
+    .filter(
+      (activity) =>
+        activity.status === "planned" &&
+        new Date(activity.endAt).getTime() < initialNow,
+    )
+    .sort(
+      (first, second) =>
+        new Date(first.endAt).getTime() - new Date(second.endAt).getTime(),
     )
     .slice(0, 6);
 
@@ -1564,6 +2008,54 @@ function Dashboard({
           </div>
         </article>
       </section>
+      <section
+        className={`dashboard-attention panel${overdueActivities.length ? " has-overdue" : ""}`}
+        aria-label="Trabajo que requiere atención"
+      >
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Seguimiento</p>
+            <h2>Trabajo vencido</h2>
+            <p>
+              {overdueActivities.length
+                ? `${totals.overdue} actividad${totals.overdue === 1 ? "" : "es"} requiere${totals.overdue === 1 ? "" : "n"} atención.`
+                : "No hay actividades vencidas."}
+            </p>
+          </div>
+          <DashboardLink
+            className="panel-action"
+            href={viewHref("schedule")}
+            onNavigate={() => onNavigate("schedule")}
+          >
+            Ver agenda
+          </DashboardLink>
+        </div>
+        {overdueActivities.length > 0 && (
+          <div className="snapshot-list">
+            {overdueActivities.map((activity) => (
+              <DashboardLink
+                className="snapshot-row snapshot-activity overdue-row"
+                href={`${viewHref("schedule")}&record=${encodeURIComponent(activity.id)}`}
+                key={activity.id}
+                onNavigate={() => onNavigate("schedule", activity.id)}
+              >
+                <span className="snapshot-type" aria-hidden="true">
+                  !
+                </span>
+                <span className="snapshot-copy">
+                  <small className="type-label">Actividad vencida</small>
+                  <strong>{activity.title}</strong>
+                  <small>{dateTime(activity.endAt, true)}</small>
+                  <small className="snapshot-meta">
+                    Responsable: {activity.ownerEmail}
+                  </small>
+                </span>
+                <span className="status status-overdue">Vencida</span>
+              </DashboardLink>
+            ))}
+          </div>
+        )}
+      </section>
       <section className="panel dashboard-recent">
         <div className="panel-heading">
           <h2>Actividad reciente</h2>
@@ -1575,6 +2067,9 @@ function Dashboard({
           onArchive={() => undefined}
           onEdit={() => undefined}
           records={records.slice(0, 10)}
+          onOpenRecord={(record) =>
+            onNavigate(record.module as View, record.id)
+          }
         />
       </section>
     </>
@@ -1647,6 +2142,29 @@ function DocumentsView({
   onUpload(event: FormEvent<HTMLFormElement>): void;
   onDelete(document: DocumentRow): void;
 }) {
+  const [query, setQuery] = useUrlState("q");
+  const [pageSizeValue, setPageSizeValue] = useUrlState("pageSize", "10");
+  const filteredDocuments = useMemo(
+    () =>
+      documents
+        .filter((document) =>
+          `${document.name} ${document.createdBy}`
+            .toLowerCase()
+            .includes(query.trim().toLowerCase()),
+        )
+        .toSorted((left, right) =>
+          right.createdAt.localeCompare(left.createdAt),
+        ),
+    [documents, query],
+  );
+  const pageSize =
+    pageSizeValue === "all"
+      ? Math.max(filteredDocuments.length, 1)
+      : Number(pageSizeValue) || 10;
+  const { page, pageItems, setPage, totalPages } = usePagination(
+    filteredDocuments,
+    pageSize,
+  );
   return (
     <>
       <div className="breadcrumbs">
@@ -1654,13 +2172,11 @@ function DocumentsView({
         <i>/</i>
         <span aria-current="page">Documentos</span>
       </div>
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">R2 privado</p>
-          <h1>Documentos</h1>
-          <p>Archivos vinculados a la operación.</p>
-        </div>
-      </div>
+      <PageHeader
+        description="Archivos vinculados a la operación."
+        eyebrow="R2 privado"
+        title="Documentos"
+      />
       {canWrite && (
         <form className="upload-panel" onSubmit={onUpload}>
           <label>
@@ -1689,12 +2205,49 @@ function DocumentsView({
           <small>PDF, imagen, DOCX o XLSX. Máximo 10 MB.</small>
         </form>
       )}
+      <div className="toolbar toolbar-filters">
+        <AutocompleteInput
+          ariaLabel="Buscar documentos"
+          onChange={(value) => {
+            setQuery(value);
+            setPage(1);
+          }}
+          onSelect={(option) => {
+            setQuery(option.label);
+            setPage(1);
+          }}
+          options={filteredDocuments.slice(0, 8).map((document) => ({
+            id: document.id,
+            label: document.name,
+            secondary: document.createdBy,
+          }))}
+          placeholder="Escribe un nombre de archivo o responsable…"
+          value={query}
+        />
+        <PageSizeControl
+          label="Documentos por página"
+          onChange={(value) => {
+            setPageSizeValue(value);
+            setPage(1);
+          }}
+          value={pageSizeValue}
+        />
+        <span className="record-count">
+          <strong>{filteredDocuments.length}</strong> documentos
+        </span>
+      </div>
       <section className="panel">
         <div className="document-list">
-          {documents.length === 0 ? (
-            <Empty text="No hay documentos cargados." />
+          {filteredDocuments.length === 0 ? (
+            <Empty
+              text={
+                query
+                  ? "No hay documentos que coincidan con la búsqueda."
+                  : "No hay documentos cargados."
+              }
+            />
           ) : (
-            documents.map((document) => (
+            pageItems.map((document) => (
               <article
                 className={highlightId === document.id ? "highlight-row" : ""}
                 id={`record-${document.id}`}
@@ -1702,7 +2255,7 @@ function DocumentsView({
               >
                 <div className="file-icon">DOC</div>
                 <div>
-                  <strong>{document.name}</strong>
+                  <strong title={document.name}>{document.name}</strong>
                   <span>
                     {formatBytes(document.size)} ·{" "}
                     {dateTime(document.createdAt)} · {document.createdBy}
@@ -1721,81 +2274,11 @@ function DocumentsView({
             ))
           )}
         </div>
-      </section>
-    </>
-  );
-}
-
-function UsersView({
-  users,
-  busy,
-  onAdd,
-  onToggle,
-}: {
-  users: StaffUser[];
-  busy: boolean;
-  onAdd(event: FormEvent<HTMLFormElement>): void;
-  onToggle(user: StaffUser): void;
-}) {
-  return (
-    <>
-      <div className="breadcrumbs">
-        <span>Inicio</span>
-        <i>/</i>
-        <span aria-current="page">Usuarios</span>
-      </div>
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">Seguridad</p>
-          <h1>Usuarios autorizados</h1>
-          <p>La identidad de ChatGPT se valida contra esta lista D1.</p>
-        </div>
-      </div>
-      <form className="user-form" onSubmit={onAdd}>
-        <label>
-          Nombre
-          <input autoComplete="name" name="name" required />
-        </label>
-        <label>
-          Correo de ChatGPT
-          <input
-            autoComplete="email"
-            name="email"
-            required
-            spellCheck={false}
-            type="email"
-          />
-        </label>
-        <label>
-          Rol
-          <select defaultValue="operator" name="role">
-            <option value="operator">Operador</option>
-            <option value="viewer">Solo lectura</option>
-            <option value="admin">Administrador</option>
-          </select>
-        </label>
-        <button className="primary-button" disabled={busy}>
-          Autorizar
-        </button>
-      </form>
-      <section className="panel">
-        <div className="user-list">
-          {users.map((user) => (
-            <article key={user.id}>
-              <div>
-                <strong>{user.name}</strong>
-                <span>{user.email}</span>
-              </div>
-              <span className={`status ${user.active ? "status-active" : ""}`}>
-                {user.active ? "Activo" : "Inactivo"}
-              </span>
-              <span>{user.role}</span>
-              <button className="text-button" onClick={() => onToggle(user)}>
-                {user.active ? "Desactivar" : "Activar"}
-              </button>
-            </article>
-          ))}
-        </div>
+        <Pagination
+          onPageChange={setPage}
+          page={page}
+          totalPages={totalPages}
+        />
       </section>
     </>
   );
@@ -1804,43 +2287,180 @@ function UsersView({
 function RecordsTable({
   records,
   canWrite,
+  canAskAi = false,
+  canProposeAi = false,
+  canApproveAi = false,
   highlightId,
   onEdit,
   onArchive,
+  sort,
+  direction,
+  onSort,
+  pageSize = 10,
+  onStatusFilter,
+  filterDefinitions,
+  filterValues,
+  onColumnFilter,
+  onOpenRecord,
 }: {
   records: RecordRow[];
   canWrite: boolean;
+  canAskAi?: boolean;
+  canProposeAi?: boolean;
+  canApproveAi?: boolean;
   highlightId: string | null;
   onEdit(record: RecordRow): void;
   onArchive(record: RecordRow): void;
+  sort?: string;
+  direction?: "asc" | "desc";
+  onSort?(column: string): void;
+  pageSize?: number;
+  onStatusFilter?(status: string): void;
+  filterDefinitions?: ColumnFilterDefinition<RecordRow>[];
+  filterValues?: Record<string, string>;
+  onColumnFilter?(key: string, value: string): void;
+  onOpenRecord?(record: RecordRow): void;
 }) {
-  const { page, pageItems, setPage, totalPages } = usePagination(records);
+  const { page, pageItems, setPage, totalPages } = usePagination(
+    records,
+    pageSize,
+  );
+  const filter = (key: string) => {
+    const definition = filterDefinitions?.find((item) => item.key === key);
+    if (!definition || !onColumnFilter) return null;
+    return (
+      <ColumnFilterPopover
+        definition={definition}
+        value={filterValues?.[key] ?? ""}
+        onChange={(value) => onColumnFilter(key, value)}
+      />
+    );
+  };
   if (records.length === 0)
     return <Empty text="No hay registros en esta vista." />;
   return (
     <>
       <div className="table-wrap">
-        <table className="responsive-table">
+        <table className="responsive-table collection-table records-table">
           <thead>
             <tr>
-              <th>Registro</th>
-              <th>Estado</th>
-              <th>Empresa / contacto</th>
-              <th>Monto</th>
-              <th>Balance</th>
-              <th>Fecha</th>
-              {canWrite && <th>Acciones</th>}
+              <th>
+                <span className="table-header-with-filter">
+                  {onSort ? (
+                    <SortHeader
+                      column="title"
+                      direction={direction ?? "asc"}
+                      label="Registro"
+                      onSort={onSort}
+                      sort={sort ?? "title"}
+                    />
+                  ) : (
+                    <span>Registro</span>
+                  )}
+                  {filter("title")}
+                </span>
+              </th>
+              <th>
+                {onSort ? (
+                  <SortHeader
+                    column="status"
+                    direction={direction ?? "asc"}
+                    label="Estado"
+                    onSort={onSort}
+                    sort={sort ?? "title"}
+                  />
+                ) : (
+                  "Estado"
+                )}
+              </th>
+              <th>
+                <span className="table-header-with-filter">
+                  {onSort ? (
+                    <SortHeader
+                      column="customer"
+                      direction={direction ?? "asc"}
+                      label="Empresa / contacto"
+                      onSort={onSort}
+                      sort={sort ?? "title"}
+                    />
+                  ) : (
+                    <span>Empresa / contacto</span>
+                  )}
+                  {filter("customer")}
+                </span>
+              </th>
+              <th>
+                <span className="table-header-with-filter">
+                  {onSort ? (
+                    <SortHeader
+                      column="amount"
+                      direction={direction ?? "asc"}
+                      label="Monto"
+                      onSort={onSort}
+                      sort={sort ?? "title"}
+                    />
+                  ) : (
+                    <span>Monto</span>
+                  )}
+                  {filter("amount")}
+                </span>
+              </th>
+              <th>
+                <span className="table-header-with-filter">
+                  {onSort ? (
+                    <SortHeader
+                      column="balance"
+                      direction={direction ?? "asc"}
+                      label="Balance"
+                      onSort={onSort}
+                      sort={sort ?? "title"}
+                    />
+                  ) : (
+                    <span>Balance</span>
+                  )}
+                  {filter("balance")}
+                </span>
+              </th>
+              <th>
+                <span className="table-header-with-filter">
+                  {onSort ? (
+                    <SortHeader
+                      column="date"
+                      direction={direction ?? "asc"}
+                      label="Fecha"
+                      onSort={onSort}
+                      sort={sort ?? "title"}
+                    />
+                  ) : (
+                    <span>Fecha</span>
+                  )}
+                  {filter("date")}
+                </span>
+              </th>
+              {(canWrite || canAskAi) && <th>Acciones</th>}
             </tr>
           </thead>
           <tbody>
             {pageItems.map((record) => (
               <tr
-                className={highlightId === record.id ? "highlight-row" : ""}
+                className={`${highlightId === record.id ? "highlight-row" : ""}${onOpenRecord ? " clickable-row" : ""}`}
                 id={`record-${record.id}`}
                 key={record.id}
+                onClick={onOpenRecord ? () => onOpenRecord(record) : undefined}
+                onKeyDown={
+                  onOpenRecord
+                    ? (event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          onOpenRecord(record);
+                        }
+                      }
+                    : undefined
+                }
+                tabIndex={onOpenRecord ? 0 : undefined}
               >
                 <td data-label="Registro">
-                  <strong>{record.title}</strong>
+                  <strong title={record.title}>{record.title}</strong>
                   <span>
                     {modules.find((item) => item.key === record.module)
                       ?.label ?? record.module}
@@ -1850,7 +2470,14 @@ function RecordsTable({
                   )}
                 </td>
                 <td data-label="Estado">
-                  <span className="status">{record.status || "—"}</span>
+                  <FilterableStatus
+                    label={displayGenericStatus(record.status)}
+                    onFilter={
+                      onStatusFilter && record.status
+                        ? () => onStatusFilter(record.status)
+                        : undefined
+                    }
+                  />
                 </td>
                 <td data-label="Empresa / contacto">
                   {record.customerName || record.contact || "—"}
@@ -1864,16 +2491,28 @@ function RecordsTable({
                 <td data-label="Fecha">
                   {dateTime(record.dueDate ?? record.updatedAt)}
                 </td>
-                {canWrite && (
+                {(canWrite || canAskAi) && (
                   <td data-label="Acciones">
+                    {canAskAi && record.module === "ordenes-cambio" && (
+                      <RecordAiPanel
+                        canApprove={canApproveAi}
+                        canAsk
+                        canPropose={canProposeAi}
+                        entityId={record.id}
+                        entityType="case"
+                        title={record.title}
+                      />
+                    )}
                     <button
                       className="text-button"
+                      hidden={!canWrite}
                       onClick={() => onEdit(record)}
                     >
                       Editar
                     </button>
                     <button
                       className="danger-link"
+                      hidden={!canWrite}
                       onClick={() => onArchive(record)}
                     >
                       Archivar
@@ -1893,7 +2532,6 @@ function RecordsTable({
 function RecordForm({
   form,
   setForm,
-  editing,
   financial,
   busy,
   onSubmit,
@@ -1901,7 +2539,6 @@ function RecordForm({
 }: {
   form: typeof emptyRecordForm;
   setForm(value: typeof emptyRecordForm): void;
-  editing: boolean;
   financial: boolean;
   busy: boolean;
   onSubmit(event: FormEvent): void;
@@ -1913,12 +2550,6 @@ function RecordForm({
   const { formProps, requestCancel } = useFormGuard(onCancel);
   return (
     <form {...formProps} className="record-form" onSubmit={onSubmit}>
-      <div className="form-heading">
-        <h2>{editing ? "Editar registro" : "Nuevo registro"}</h2>
-        <button aria-label="Cerrar" onClick={requestCancel} type="button">
-          ×
-        </button>
-      </div>
       <div className="form-grid">
         <label className="wide">
           Título
@@ -2032,7 +2663,8 @@ function parseView(value: string | null): View {
     value === "receivables" ||
     value === "collections" ||
     value === "documentos" ||
-    value === "usuarios"
+    value === "usuarios" ||
+    value === "ai-settings"
   )
     return value;
   return value && isModuleKey(value) ? value : "resumen";

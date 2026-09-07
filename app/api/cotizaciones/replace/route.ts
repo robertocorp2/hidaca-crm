@@ -165,7 +165,7 @@ async function reconcile(rows: SourceRow[]) {
 }
 
 export async function POST(request: Request) {
-  const auth = await authorizeApi(true);
+  const auth = await authorizeApi({ module: "cotizaciones", action: "administer" });
   if (!auth.ok) return auth.response;
   const form = await request.formData();
   const file = form.get("file");

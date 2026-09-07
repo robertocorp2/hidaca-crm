@@ -4,8 +4,10 @@
   "compatibility_date": "2026-07-29",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
-    "INVOICE_IMPORT_PHASE1_ENABLED": "true",
-    "INVOICE_PRODUCTION_IMPORT_ENABLED": "true"
+    "INVOICE_IMPORT_PHASE1_ENABLED": "false",
+    "INVOICE_PRODUCTION_IMPORT_ENABLED": "false",
+    "WHATSAPP_ENABLED": "false",
+    "WHATSAPP_CAMPAIGNS_ENABLED": "false"
   },
   "d1_databases": [
     {

@@ -26,12 +26,13 @@ test("enforces ChatGPT identity plus a server-side D1 allowlist", async () => {
   assert.match(authorization, /getChatGPTUser/);
   assert.match(authorization, /staffUsers/);
   assert.match(authorization, /eq\(staffUsers\.active, true\)/);
-  assert.match(authorization, /adminOnly/);
+  assert.match(authorization, /AuthorizationRequirement/);
+  assert.match(authorization, /resolvePermissionMatrix/);
   assert.match(protectedPage, /getAuthorizedUser/);
   assert.match(protectedPage, /Cuenta no autorizada/i);
 });
 
-test("protects mutating APIs and preserves viewer read-only access", async () => {
+test("protects mutating APIs with module permissions", async () => {
   const routes = await Promise.all([
     read("../app/api/records/route.ts"),
     read("../app/api/records/[id]/route.ts"),
@@ -40,11 +41,11 @@ test("protects mutating APIs and preserves viewer read-only access", async () =>
     read("../app/api/users/route.ts"),
   ]);
   for (const route of routes) assert.match(route, /authorizeApi/);
-  assert.match(routes[0], /role === "viewer"/);
+  assert.match(routes[0], /permissionModuleForLegacyRecord/);
   assert.match(routes[1], /archivedAt/);
   assert.match(routes[2], /maxSize = 10 \* 1024 \* 1024/);
   assert.match(routes[3], /cache-control.*private, no-store/s);
-  assert.match(routes[4], /authorizeApi\(true\)/);
+  assert.match(routes[4], /module: "usuarios", action: "create"/);
 
   const [operationsClient, ui] = await Promise.all([
     read("../app/app/operations-client.tsx"),

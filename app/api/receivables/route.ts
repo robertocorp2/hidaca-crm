@@ -1,13 +1,20 @@
 import { getD1 } from "../../../db";
 import { authorizeInvoiceApi } from "../../lib/invoice-api";
+import { getDashboardReceivableBalance } from "../../lib/dashboard-financials";
 
 export async function GET(request: Request) {
-  const auth = await authorizeInvoiceApi();
+  const auth = await authorizeInvoiceApi({ module: "cuentas-cobrar" });
   if (!auth.ok) return auth.response;
   const url = new URL(request.url);
   const q = (url.searchParams.get("q") ?? "").trim().slice(0, 120);
   const aging = (url.searchParams.get("aging") ?? "").trim();
   const now = new Date().toISOString().slice(0, 10);
+  if (url.searchParams.get("summary") === "1") {
+    return Response.json({
+      totalBalance: await getDashboardReceivableBalance(),
+      asOf: now,
+    });
+  }
   const receivables =
     (
       await getD1()

@@ -15,7 +15,7 @@ import {
 import { cleanText } from "../../lib/crm";
 
 export async function GET(request: Request) {
-  const auth = await authorizeInvoiceApi();
+  const auth = await authorizeInvoiceApi({ module: "cobranza" });
   if (!auth.ok) return auth.response;
   const url = new URL(request.url);
   const invoiceId = (url.searchParams.get("invoiceId") ?? "").trim();
@@ -43,7 +43,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const auth = await authorizeInvoiceApi({ write: true });
+  const auth = await authorizeInvoiceApi({ module: "cobranza", write: true, action: "create" });
   if (!auth.ok) return auth.response;
   const payload = (await request.json()) as Record<string, unknown>;
   const invoiceId = cleanText(payload.invoiceId, 80);

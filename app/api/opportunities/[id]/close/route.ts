@@ -12,11 +12,8 @@ import { searchDocumentStatement } from "../../../../lib/search";
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function POST(request: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "oportunidades", action: "edit" });
   if (!auth.ok) return auth.response;
-  if (auth.user.role === "viewer") {
-    return Response.json({ error: "Acceso de solo lectura." }, { status: 403 });
-  }
   const { id } = await context.params;
   const payload = (await request.json()) as Record<string, unknown>;
   const outcome = payload.outcome;

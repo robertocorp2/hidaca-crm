@@ -47,7 +47,7 @@ function localBindingConfig(includeLocalFeatureDefaults: boolean) {
   };
 }
 
-export default defineConfig(async ({ command }) => {
+export default defineConfig(async () => {
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= "false";
@@ -66,9 +66,10 @@ export default defineConfig(async ({ command }) => {
       sites(),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
-        // Only the local dev worker receives safe default flag values.
-        // Production Sites builds must leave these runtime values unbound.
-        config: localBindingConfig(command === "serve"),
+        // Feature flags default to disabled in application code. Omitting them
+        // here keeps production values runtime-managed and avoids baking local
+        // defaults into Vinext's generated worker manifest.
+        config: localBindingConfig(false),
         persistState: process.env.HIDACA_LOCAL_STATE_PATH
           ? { path: process.env.HIDACA_LOCAL_STATE_PATH }
           : true,

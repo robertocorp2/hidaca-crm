@@ -177,3 +177,89 @@ export type OpportunityQuoteLink = {
   createdBy: string;
   createdAt: string;
 };
+
+export type DetailRelation = {
+  id: string;
+  [key: string]: unknown;
+};
+
+export type RelatedRecordLink = {
+  id: string;
+  view?: string;
+  href: string;
+  label: string;
+  kind: "business" | "contact" | "project" | "opportunity" | "quotation" | "invoice" | "payment" | "case" | "document";
+  openMode: "workspace" | "modal" | "preview" | "download";
+};
+
+export type LinkedDocument = DetailRelation & {
+  id?: string;
+  name?: string;
+  originalFilename?: string;
+  originalUri?: string;
+  contentType?: string;
+  extension?: string;
+  size?: number;
+  availability?: string;
+  href?: string;
+  previewable?: boolean;
+};
+
+export type QuotationInvoiceDraft = {
+  quotationId: string;
+  quotationNumber: string;
+  status: string;
+  revisionId: string;
+  existingInvoices: DetailRelation[];
+  warning?: string;
+  state: {
+    fields: Record<string, string>;
+    lines: Array<Record<string, string>>;
+    financials: {
+      discount: string;
+      additionalChargeLabel: string;
+      additionalChargeAmount: string;
+      taxRate: string;
+      advance: string;
+    };
+    terms: {
+      paymentConditions: string;
+      customerFacingNotes: string;
+      internalNotes: string;
+    };
+  };
+};
+
+export type RecordHistoryEntry = {
+  entityType?: string;
+  entityId?: string;
+  action: string;
+  actorEmail?: string;
+  reason?: string;
+  createdAt: string;
+};
+
+export type BusinessDetailResponse = {
+  business: BusinessRow;
+  contacts: DetailRelation[];
+  addresses: DetailRelation[];
+  projects: DetailRelation[];
+  opportunities: DetailRelation[];
+  quotations: DetailRelation[];
+  invoices: DetailRelation[];
+  payments: DetailRelation[];
+  documents: LinkedDocument[];
+  cases: DetailRelation[];
+  history: RecordHistoryEntry[];
+};
+
+export type ContactDetailResponse = {
+  contact: ContactRow;
+  business?: BusinessRow | null;
+  projects: DetailRelation[];
+  opportunities: DetailRelation[];
+  quotations: DetailRelation[];
+  invoices: DetailRelation[];
+  documents: LinkedDocument[];
+  history: RecordHistoryEntry[];
+};

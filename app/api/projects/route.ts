@@ -3,7 +3,7 @@ import { authorizeApi } from "../../lib/authorization";
 import { cleanText } from "../../lib/crm";
 
 export async function GET(request: Request) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "proyectos", action: "view" });
   if (!auth.ok) return auth.response;
   const params = new URL(request.url).searchParams;
   const q = cleanText(params.get("q"), 120);
@@ -67,11 +67,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "proyectos", action: "create" });
   if (!auth.ok) return auth.response;
-  if (auth.user.role === "viewer") {
-    return Response.json({ error: "Acceso de solo lectura." }, { status: 403 });
-  }
   const payload = (await request.json()) as Record<string, unknown>;
   const name = cleanText(payload.name, 240);
   const businessId = cleanText(payload.businessId, 80);

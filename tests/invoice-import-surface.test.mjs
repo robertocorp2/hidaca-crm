@@ -4,11 +4,13 @@ import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
-test("invoice APIs share the disabled feature gate and role-aware authorization", async () => {
+test("invoice APIs share the disabled feature gate and module-aware authorization", async () => {
   const api = await read("../app/lib/invoice-api.ts");
   assert.match(api, /isInvoiceImportPhase1Enabled/);
   assert.match(api, /status:\s*404/);
-  assert.match(api, /role === "viewer"/);
+  assert.match(api, /PermissionModuleKey/);
+  assert.match(api, /action: options\?\.action/);
+  assert.match(api, /"administer"/);
   for (const path of [
     "../app/api/invoices/route.ts",
     "../app/api/payments/route.ts",

@@ -8,6 +8,7 @@ import {
   type OpportunityStage,
 } from "../lib/crm";
 import { PipelineStepper, type PipelineOutcome } from "./pipeline";
+import { RecordAiPanel } from "./record-ai-panel";
 import type {
   ActivityRow,
   BusinessRow,
@@ -18,11 +19,17 @@ import type {
   RecordRow,
 } from "./types";
 import {
+  ActiveFilterChip,
+  AutocompleteInput,
   Breadcrumbs,
   Empty,
+  FilterableStatus,
   InlineAlert,
   Modal,
+  PageHeader,
+  PageSizeControl,
   Pagination,
+  SortHeader,
   dateInputValue,
   dateTime,
   money,
@@ -50,6 +57,9 @@ export function OpportunitiesView({
   selectedId,
   setSelectedId,
   canWrite,
+  canAskAi,
+  canProposeAi,
+  canApproveAi,
   isAdmin,
   currentUserEmail,
   setMessage,
@@ -69,6 +79,9 @@ export function OpportunitiesView({
   selectedId: string | null;
   setSelectedId(value: string | null): void;
   canWrite: boolean;
+  canAskAi: boolean;
+  canProposeAi: boolean;
+  canApproveAi: boolean;
   isAdmin: boolean;
   currentUserEmail: string;
   setMessage(message: string): void;
@@ -77,7 +90,9 @@ export function OpportunitiesView({
   const [search, setSearch] = useUrlState("q");
   const [stageFilter, setStageFilter] = useUrlState("stage");
   const [ownerFilter, setOwnerFilter] = useUrlState("owner");
-  const [sort, setSort] = useUrlState("sort", "recent");
+  const [sort, setSort] = useUrlState("sort", "updated");
+  const [direction, setDirection] = useUrlState("dir", "desc");
+  const [pageSizeValue, setPageSizeValue] = useUrlState("pageSize", "10");
   const [editing, setEditing] = useState<OpportunityRow | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [showClose, setShowClose] = useState(false);
@@ -106,18 +121,14 @@ export function OpportunitiesView({
         );
       })
       .toSorted((left, right) => {
-        if (sort === "value")
-          return right.estimatedValue - left.estimatedValue;
-        if (sort === "close")
-          return (left.expectedCloseDate ?? "9999").localeCompare(
-            right.expectedCloseDate ?? "9999",
-          );
-        if (sort === "stage")
-          return (
-            opportunityStages.indexOf(left.stage) -
-            opportunityStages.indexOf(right.stage)
-          );
-        return right.updatedAt.localeCompare(left.updatedAt);
+        const multiplier = direction === "desc" ? -1 : 1;
+        if (sort === "value") return multiplier * (left.estimatedValue - right.estimatedValue);
+        if (sort === "stage") return multiplier * (opportunityStages.indexOf(left.stage) - opportunityStages.indexOf(right.stage));
+        const leftBusiness = businesses.find((item) => item.id === left.businessId)?.name ?? "";
+        const rightBusiness = businesses.find((item) => item.id === right.businessId)?.name ?? "";
+        const leftValue = sort === "business" ? leftBusiness : sort === "close" ? (left.expectedCloseDate ?? "9999") : left.updatedAt;
+        const rightValue = sort === "business" ? rightBusiness : sort === "close" ? (right.expectedCloseDate ?? "9999") : right.updatedAt;
+        return multiplier * leftValue.localeCompare(rightValue, "es", { sensitivity: "base" });
       });
   }, [
     businesses,
@@ -126,8 +137,19 @@ export function OpportunitiesView({
     search,
     sort,
     stageFilter,
+    direction,
   ]);
-  const { page, pageItems, setPage, totalPages } = usePagination(rows);
+  const pageSize = pageSizeValue === "all" ? Math.max(rows.length, 1) : Number(pageSizeValue) || 10;
+  const { page, pageItems, setPage, totalPages } = usePagination(rows, pageSize);
+
+  function sortBy(column: string) {
+    if (sort === column) setDirection(direction === "asc" ? "desc" : "asc");
+    else {
+      setSort(column);
+      setDirection("asc");
+    }
+    setPage(1);
+  }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -480,6 +502,7 @@ export function OpportunitiesView({
           </div>
         )}
         <section className="detail-grid">
+          <article className="detail-card record-ai-detail-card"><h2>Asistente contextual</h2><p className="muted">Revisa señales, relaciones y seguimientos de esta oportunidad.</p><RecordAiPanel canApprove={canApproveAi} canAsk={canAskAi} canPropose={canProposeAi} entityId={selected.id} entityType="opportunity" title={selected.title} /></article>
           <article className="detail-card">
             <h2>Detalles de la oportunidad</h2>
             <dl>
@@ -531,7 +554,15 @@ export function OpportunitiesView({
             ) : <p className="muted">No hay actividades relacionadas.</p>}
           </article>
         </section>
-        {showForm && <OpportunityForm businesses={businesses} busy={busy} contacts={contacts} currentUserEmail={currentUserEmail} error={formError} onCancel={() => setShowForm(false)} onSubmit={save} opportunity={editing} />}
+        {showForm && (
+          <Modal
+            onClose={() => setShowForm(false)}
+            title={editing ? "Editar oportunidad" : "Nueva oportunidad"}
+            wide
+          >
+            <OpportunityForm businesses={businesses} busy={busy} contacts={contacts} currentUserEmail={currentUserEmail} error={formError} onCancel={() => setShowForm(false)} onSubmit={save} opportunity={editing} />
+          </Modal>
+        )}
         {showClose && <CloseDialog busy={busy} error={formError} onClose={() => setShowClose(false)} onSubmit={closeOpportunity} />}
         {showReopen && (
           <Modal eyebrow="Acción de administrador" onClose={() => setShowReopen(false)} title="Reabrir oportunidad">
@@ -545,21 +576,27 @@ export function OpportunitiesView({
   return (
     <>
       <Breadcrumbs items={[{ label: "Inicio" }, { label: "Oportunidades" }]} />
-      <div className="page-heading">
-        <div><p className="eyebrow">CRM</p><h1>Oportunidades</h1><p>Trabajo calificado desde evaluación hasta cierre.</p></div>
-        {canWrite && <button className="primary-button" onClick={() => { setEditing(null); setFormError(""); setShowForm(true); }}>Nueva oportunidad</button>}
-      </div>
+      <PageHeader action={canWrite ? <button className="primary-button" onClick={() => { setEditing(null); setFormError(""); setShowForm(true); }}>Nueva oportunidad</button> : undefined} description="Trabajo calificado desde evaluación hasta cierre." eyebrow="CRM" title="Oportunidades" />
       <div className="toolbar toolbar-filters">
-        <input aria-label="Buscar oportunidades" autoComplete="off" name="q" onChange={(event) => setSearch(event.target.value)} placeholder="Buscar oportunidades o empresas…" value={search} />
-        <select aria-label="Filtrar oportunidades por etapa" onChange={(event) => setStageFilter(event.target.value)} value={stageFilter}><option value="">Todas las etapas</option>{opportunityStages.map((stage) => <option key={stage} value={stage}>{opportunityStageLabels[stage]}</option>)}</select>
-        <select aria-label="Filtrar oportunidades por responsable" onChange={(event) => setOwnerFilter(event.target.value)} value={ownerFilter}><option value="">Todos los responsables</option>{owners.map((owner) => <option key={owner}>{owner}</option>)}</select>
-        <select aria-label="Ordenar oportunidades" onChange={(event) => setSort(event.target.value)} value={sort}><option value="recent">Actualizadas recientemente</option><option value="value">Valor estimado</option><option value="close">Cierre previsto</option><option value="stage">Etapa del pipeline</option></select>
-        <span>{rows.length} oportunidades</span>
+        <AutocompleteInput ariaLabel="Buscar oportunidades" onChange={(value) => { setSearch(value); setPage(1); }} onSelect={(option) => { setSearch(option.label); setPage(1); }} options={rows.slice(0, 8).map((opportunity) => ({ id: opportunity.id, label: opportunity.title, secondary: businesses.find((item) => item.id === opportunity.businessId)?.name }))} placeholder="Escribe una oportunidad o empresa…" value={search} />
+        <select aria-label="Filtrar oportunidades por etapa" onChange={(event) => { setStageFilter(event.target.value); setPage(1); }} value={stageFilter}><option value="">Todas las etapas</option>{opportunityStages.map((stage) => <option key={stage} value={stage}>{opportunityStageLabels[stage]}</option>)}</select>
+        <select aria-label="Filtrar oportunidades por responsable" onChange={(event) => { setOwnerFilter(event.target.value); setPage(1); }} value={ownerFilter}><option value="">Todos los responsables</option>{owners.map((owner) => <option key={owner}>{owner}</option>)}</select>
+        <PageSizeControl label="Oportunidades por página" onChange={(value) => { setPageSizeValue(value); setPage(1); }} value={pageSizeValue} />
+        <span className="record-count"><strong>{rows.length}</strong> oportunidades</span>
       </div>
-      {showForm && <OpportunityForm businesses={businesses} busy={busy} contacts={contacts} currentUserEmail={currentUserEmail} error={formError} onCancel={() => setShowForm(false)} onSubmit={save} opportunity={editing} />}
+      {(stageFilter || ownerFilter) && <div className="active-filter-row">{stageFilter && <ActiveFilterChip label={`Etapa: ${opportunityStageLabels[stageFilter as OpportunityStage] ?? stageFilter}`} onClear={() => { setStageFilter(""); setPage(1); }} />}{ownerFilter && <ActiveFilterChip label={`Responsable: ${ownerFilter}`} onClear={() => { setOwnerFilter(""); setPage(1); }} />}</div>}
+      {showForm && (
+        <Modal
+          onClose={() => setShowForm(false)}
+          title={editing ? "Editar oportunidad" : "Nueva oportunidad"}
+          wide
+        >
+          <OpportunityForm businesses={businesses} busy={busy} contacts={contacts} currentUserEmail={currentUserEmail} error={formError} onCancel={() => setShowForm(false)} onSubmit={save} opportunity={editing} />
+        </Modal>
+      )}
       <section className="panel">
         {rows.length ? (
-          <div className="table-wrap"><table className="responsive-table"><thead><tr><th>Oportunidad</th><th>Empresa</th><th>Etapa / resultado</th><th>Valor</th><th>Cierre previsto</th><th>Responsable</th></tr></thead><tbody>{pageItems.map((opportunity) => (
+          <div className="table-wrap"><table className="responsive-table collection-table opportunities-table"><thead><tr><th>Oportunidad</th><th><SortHeader column="business" direction={direction as "asc" | "desc"} label="Empresa" onSort={sortBy} sort={sort} /></th><th><SortHeader column="stage" direction={direction as "asc" | "desc"} label="Etapa / resultado" onSort={sortBy} sort={sort} /></th><th><SortHeader column="value" direction={direction as "asc" | "desc"} label="Valor" onSort={sortBy} sort={sort} /></th><th><SortHeader column="close" direction={direction as "asc" | "desc"} label="Cierre previsto" onSort={sortBy} sort={sort} /></th><th>Responsable</th></tr></thead><tbody>{pageItems.map((opportunity) => (
             <tr
               className="clickable-row"
               key={opportunity.id}
@@ -571,7 +608,7 @@ export function OpportunitiesView({
                 }
               }}
               tabIndex={0}
-            ><td data-label="Oportunidad"><strong>{opportunity.title}</strong></td><td data-label="Empresa">{businesses.find((item) => item.id === opportunity.businessId)?.name ?? "—"}</td><td data-label="Etapa / resultado"><span className={`status status-${opportunity.stage}`}>{opportunityStageLabels[opportunity.stage]}{opportunity.outcome ? ` — ${opportunityOutcomeLabels[opportunity.outcome]}` : ""}</span></td><td data-label="Valor">{money(opportunity.estimatedValue)}</td><td data-label="Cierre previsto">{dateTime(opportunity.expectedCloseDate)}</td><td data-label="Responsable">{opportunity.ownerEmail}</td></tr>
+            ><td data-label="Oportunidad"><strong title={opportunity.title}>{opportunity.title}</strong></td><td data-label="Empresa">{businesses.find((item) => item.id === opportunity.businessId)?.name ?? "—"}</td><td data-label="Etapa / resultado"><FilterableStatus className={`status-${opportunity.stage}`} label={`${opportunityStageLabels[opportunity.stage]}${opportunity.outcome ? ` — ${opportunityOutcomeLabels[opportunity.outcome]}` : ""}`} onFilter={() => { setStageFilter(opportunity.stage); setPage(1); }} /></td><td data-label="Valor">{money(opportunity.estimatedValue)}</td><td data-label="Cierre previsto">{dateTime(opportunity.expectedCloseDate)}</td><td data-label="Responsable">{opportunity.ownerEmail}</td></tr>
           ))}</tbody></table></div>
         ) : <Empty action={canWrite ? <button className="primary-button" onClick={() => { setEditing(null); setFormError(""); setShowForm(true); }} type="button">Nueva oportunidad</button> : undefined} text="No hay oportunidades en esta vista." />}
         <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
@@ -602,7 +639,6 @@ function OpportunityForm({
   const { formProps, requestCancel } = useFormGuard(onCancel);
   return (
     <form {...formProps} className="record-form" onSubmit={onSubmit}>
-      <div className="form-heading"><h2>{opportunity ? "Editar oportunidad" : "Nueva oportunidad"}</h2><button aria-label="Cerrar" onClick={requestCancel} type="button">×</button></div>
       <InlineAlert message={error} />
       <div className="form-grid">
         <label className="wide">Título de la oportunidad<input autoComplete="off" defaultValue={opportunity?.title} name="title" required /></label>

@@ -1,8 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import type { BusinessRow, ContactRow } from "./types";
-import { Empty, dateTime } from "./ui";
+import { RecordAiPanel } from "./record-ai-panel";
+import {
+  ActiveFilterChip,
+  AutocompleteInput,
+  Empty,
+  FilterableStatus,
+  LoadingState,
+  Modal,
+  PageHeader,
+  PageSizeControl,
+  Pagination,
+  SortHeader,
+  dateTime,
+  usePagination,
+  useUrlState,
+} from "./ui";
 
 type ProjectSummary = {
   id: string;
@@ -37,10 +52,21 @@ type ProjectDetail = {
   history: Array<Record<string, unknown>>;
 };
 
+const projectStatusLabels: Record<string, string> = {
+  active: "Activo",
+  planned: "Planificado",
+  on_hold: "En pausa",
+  completed: "Completado",
+  cancelled: "Cancelado",
+};
+
 export function ProjectsView({
   businesses,
   contacts,
   canWrite,
+  canAskAi,
+  canProposeAi,
+  canApproveAi,
   currentUserEmail,
   selectedId,
   setSelectedId,
@@ -49,6 +75,9 @@ export function ProjectsView({
   businesses: BusinessRow[];
   contacts: ContactRow[];
   canWrite: boolean;
+  canAskAi: boolean;
+  canProposeAi: boolean;
+  canApproveAi: boolean;
   currentUserEmail: string;
   selectedId: string | null;
   setSelectedId(value: string | null): void;
@@ -56,13 +85,37 @@ export function ProjectsView({
 }) {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("");
+  const [query, setQuery] = useUrlState("q");
+  const [status, setStatus] = useUrlState("status");
+  const [sort, setSort] = useUrlState("sort", "updated");
+  const [direction, setDirection] = useUrlState("dir", "desc");
+  const [pageSizeValue, setPageSizeValue] = useUrlState("pageSize", "10");
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<ProjectSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  const rows = useMemo(() => {
+    const multiplier = direction === "desc" ? -1 : 1;
+    return projects.toSorted((left, right) => {
+      const leftValue = sort === "business" ? left.businessName : sort === "contact" ? (left.contactName ?? "") : sort === "status" ? left.status : sort === "quotes" ? left.quotationCount : sort === "updated" ? left.updatedAt : left.name;
+      const rightValue = sort === "business" ? right.businessName : sort === "contact" ? (right.contactName ?? "") : sort === "status" ? right.status : sort === "quotes" ? right.quotationCount : sort === "updated" ? right.updatedAt : right.name;
+      if (typeof leftValue === "number" && typeof rightValue === "number") return multiplier * (leftValue - rightValue);
+      return multiplier * String(leftValue).localeCompare(String(rightValue), "es", { sensitivity: "base" });
+    });
+  }, [direction, projects, sort]);
+  const pageSize = pageSizeValue === "all" ? Math.max(rows.length, 1) : Number(pageSizeValue) || 10;
+  const { page, pageItems, setPage, totalPages } = usePagination(rows, pageSize);
+
+  function sortBy(column: string) {
+    if (sort === column) setDirection(direction === "asc" ? "desc" : "asc");
+    else {
+      setSort(column);
+      setDirection("asc");
+    }
+    setPage(1);
+  }
 
   const loadProjects = useCallback(async () => {
     setLoading(true);
@@ -181,6 +234,7 @@ export function ProjectsView({
             </button>
           )}
         </div>
+        <RecordAiPanel canApprove={canApproveAi} canAsk={canAskAi} canPropose={canProposeAi} entityId={project.id} entityType="project" title={project.name} />
         {error && (
           <div className="inline-alert" role="alert">
             {error}
@@ -263,16 +317,22 @@ export function ProjectsView({
           />
         </section>
         {showForm && (
-          <ProjectForm
-            businesses={businesses}
-            busy={busy}
-            contacts={filteredContacts}
-            currentUserEmail={currentUserEmail}
-            error={error}
-            onCancel={() => setShowForm(false)}
-            onSubmit={submit}
-            project={editing}
-          />
+          <Modal
+            onClose={() => setShowForm(false)}
+            title={editing ? "Editar proyecto" : "Nuevo proyecto"}
+            wide
+          >
+            <ProjectForm
+              businesses={businesses}
+              busy={busy}
+              contacts={filteredContacts}
+              currentUserEmail={currentUserEmail}
+              error={error}
+              onCancel={() => setShowForm(false)}
+              onSubmit={submit}
+              project={editing}
+            />
+          </Modal>
         )}
       </>
     );
@@ -285,13 +345,8 @@ export function ProjectsView({
         <i>/</i>
         <span aria-current="page">Proyectos</span>
       </div>
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">Operaciones</p>
-          <h1>Proyectos</h1>
-          <p>Clientes, contactos, ubicaciones y cotizaciones relacionadas.</p>
-        </div>
-        {canWrite && (
+      <PageHeader
+        action={canWrite ? (
           <button
             className="primary-button"
             onClick={() => {
@@ -302,64 +357,78 @@ export function ProjectsView({
           >
             Nuevo proyecto
           </button>
-        )}
-      </div>
+        ) : undefined}
+        description="Clientes, contactos, ubicaciones y cotizaciones relacionadas."
+        eyebrow="Operaciones"
+        title="Proyectos"
+      />
       <div className="toolbar toolbar-filters">
-        <input
-          aria-label="Buscar proyectos"
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Proyecto, cliente o dirección…"
+        <AutocompleteInput
+          ariaLabel="Buscar proyectos"
+          onChange={(value) => { setQuery(value); setPage(1); }}
+          onSelect={(option) => { setQuery(option.label); setPage(1); }}
+          options={projects.slice(0, 8).map((project) => ({ id: project.id, label: project.name, secondary: project.businessName }))}
+          placeholder="Escribe un proyecto, cliente o dirección…"
           value={query}
         />
         <select
           aria-label="Filtrar estado"
-          onChange={(event) => setStatus(event.target.value)}
+          onChange={(event) => { setStatus(event.target.value); setPage(1); }}
           value={status}
         >
           <option value="">Todos los estados</option>
           {["active", "planned", "on_hold", "completed", "cancelled"].map(
             (value) => (
-              <option key={value}>{value}</option>
+              <option key={value} value={value}>{projectStatusLabels[value]}</option>
             ),
           )}
         </select>
+        <PageSizeControl label="Proyectos por página" onChange={(value) => { setPageSizeValue(value); setPage(1); }} value={pageSizeValue} />
+        <span className="record-count"><strong>{rows.length}</strong> proyectos</span>
       </div>
+      {status && <div className="active-filter-row"><ActiveFilterChip label={`Estado: ${projectStatusLabels[status] ?? status}`} onClear={() => { setStatus(""); setPage(1); }} /></div>}
       {error && (
         <div className="inline-alert" role="alert">
           {error}
         </div>
       )}
       {showForm && (
-        <ProjectForm
-          businesses={businesses}
-          busy={busy}
-          contacts={contacts}
-          currentUserEmail={currentUserEmail}
-          error={error}
-          onCancel={() => setShowForm(false)}
-          onSubmit={submit}
-          project={editing}
-        />
+        <Modal
+          onClose={() => setShowForm(false)}
+          title={editing ? "Editar proyecto" : "Nuevo proyecto"}
+          wide
+        >
+          <ProjectForm
+            businesses={businesses}
+            busy={busy}
+            contacts={contacts}
+            currentUserEmail={currentUserEmail}
+            error={error}
+            onCancel={() => setShowForm(false)}
+            onSubmit={submit}
+            project={editing}
+          />
+        </Modal>
       )}
       <section className="panel">
         {loading ? (
-          <p className="empty-state">Cargando proyectos…</p>
-        ) : projects.length ? (
+          <LoadingState text="Cargando proyectos…" />
+        ) : rows.length ? (
           <div className="table-wrap">
-            <table className="responsive-table">
+            <table className="responsive-table collection-table projects-table">
               <thead>
                 <tr>
-                  <th>Proyecto</th>
-                  <th>Cliente</th>
-                  <th>Contacto</th>
+                  <th><SortHeader column="name" direction={direction as "asc" | "desc"} label="Proyecto" onSort={sortBy} sort={sort} /></th>
+                  <th><SortHeader column="business" direction={direction as "asc" | "desc"} label="Cliente" onSort={sortBy} sort={sort} /></th>
+                  <th><SortHeader column="contact" direction={direction as "asc" | "desc"} label="Contacto" onSort={sortBy} sort={sort} /></th>
                   <th>Dirección</th>
                   <th>Servicio</th>
-                  <th>Estado</th>
-                  <th>Cotizaciones</th>
+                  <th><SortHeader column="status" direction={direction as "asc" | "desc"} label="Estado" onSort={sortBy} sort={sort} /></th>
+                  <th><SortHeader column="quotes" direction={direction as "asc" | "desc"} label="Cotizaciones" onSort={sortBy} sort={sort} /></th>
                 </tr>
               </thead>
               <tbody>
-                {projects.map((project) => (
+                {pageItems.map((project) => (
                   <tr
                     className="clickable-row"
                     key={project.id}
@@ -373,7 +442,7 @@ export function ProjectsView({
                     tabIndex={0}
                   >
                     <td data-label="Proyecto">
-                      <strong>{project.name}</strong>
+                      <strong title={project.name}>{project.name}</strong>
                       <span>{project.projectType}</span>
                     </td>
                     <td data-label="Cliente">{project.businessName}</td>
@@ -385,9 +454,7 @@ export function ProjectsView({
                       {project.serviceCategory || "—"}
                     </td>
                     <td data-label="Estado">
-                      <span className={`status status-${project.status}`}>
-                        {project.status}
-                      </span>
+                      <FilterableStatus className={`status-${project.status}`} label={projectStatusLabels[project.status] ?? project.status} onFilter={() => { setStatus(project.status); setPage(1); }} />
                     </td>
                     <td data-label="Cotizaciones">{project.quotationCount}</td>
                   </tr>
@@ -398,6 +465,7 @@ export function ProjectsView({
         ) : (
           <Empty text="No hay proyectos normalizados." />
         )}
+        <Pagination onPageChange={setPage} page={page} totalPages={totalPages} />
       </section>
     </>
   );
@@ -424,12 +492,6 @@ function ProjectForm({
 }) {
   return (
     <form className="record-form" onSubmit={onSubmit}>
-      <div className="form-heading">
-        <h2>{project ? "Editar proyecto" : "Nuevo proyecto"}</h2>
-        <button aria-label="Cerrar" onClick={onCancel} type="button">
-          ×
-        </button>
-      </div>
       {error && (
         <div className="inline-alert" role="alert">
           {error}

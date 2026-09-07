@@ -20,7 +20,7 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "importaciones", action: "view" });
   if (!auth.ok) return auth.response;
   const { id } = await context.params;
   const url = new URL(request.url);
@@ -121,11 +121,8 @@ export async function PATCH(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "importaciones", action: "edit" });
   if (!auth.ok) return auth.response;
-  if (auth.user.role === "viewer") {
-    return Response.json({ error: "Acceso de solo lectura." }, { status: 403 });
-  }
   const { id: importFileId } = await context.params;
   const payload = (await request.json()) as Record<string, unknown>;
   const rowId = String(payload.rowId ?? "");

@@ -22,9 +22,10 @@ export type InvoiceExtractionAnalysis = {
 };
 
 const aliases: Record<string, string[]> = {
+  source_month: ["mes"],
   invoice_number: ["factura", "no factura", "numero factura", "n factura"],
   issue_date: ["fecha", "fecha factura", "fecha emision"],
-  business_name: ["cliente", "empresa", "razon social"],
+  business_name: ["nombre", "cliente", "empresa", "razon social"],
   rnc: ["rnc", "rnc cedula", "cedula"],
   ncf: ["ncf", "comprobante fiscal"],
   subtotal_amount: ["subtotal", "sub total"],
@@ -38,8 +39,14 @@ const aliases: Record<string, string[]> = {
     "referencia bancaria",
     "numero transaccion",
   ],
-  paid_amount_snapshot: ["avance", "pagado", "abono acumulado"],
+  paid_amount_snapshot: ["avance", "abono acumulado"],
   balance_amount_snapshot: ["pendiente", "balance", "saldo"],
+  status: ["estado", "estatus", "status", "pago", "pagado"],
+  due_date: ["vencimiento", "fecha vencimiento"],
+  payment_terms_raw: ["condiciones de pago", "condicion de pago"],
+  purchase_order_number: ["orden de compra", "orden compra"],
+  sales_representative: ["representante", "vendedor"],
+  quotation_number: ["cotizacion", "cotizacion relacionada"],
   closing_raw: ["fecha cierre", "cierre"],
   replacement_invoice_number: [
     "sustituye factura",
@@ -427,6 +434,12 @@ function registerRows(extraction: ImportExtraction, documentId: string) {
           formula: cell.formula || undefined,
         });
       }
+      if (rawValues.issue_date && rawValues.source_month) {
+        normalizedValues.issue_date = normalizeDateWithMonth(
+          String(rawValues.issue_date),
+          String(rawValues.source_month),
+        );
+      }
       if (!String(normalizedValues.invoice_number ?? "").trim()) continue;
       normalizedValues.source_authority = "matrix";
       normalizedValues.source_row_number = rowNumber;
@@ -636,9 +649,10 @@ function extractLineItems(
       for (const cell of cells) {
         const field = columns.get(cell.column);
         if (!field) continue;
-        item[field] = ["quantity", "unit_price", "line_total", "tax_amount"].includes(
-          field,
-        )
+        item[field] = [
+          "quantity", "width_cm", "height_cm", "area_sqm", "unit_price",
+          "line_total", "tax_amount",
+        ].includes(field)
           ? numeric(cell.displayValue)
           : cell.displayValue.trim();
         references.push({
@@ -694,6 +708,10 @@ function lineHeader(value: unknown) {
     return "description";
   if (/codigo|item/.test(label)) return "item_code";
   if (/cantidad|cant/.test(label)) return "quantity";
+  if (/ubicacion/.test(label)) return "location";
+  if (/ancho/.test(label)) return "width_cm";
+  if (/altura/.test(label)) return "height_cm";
+  if (/area/.test(label)) return "area_sqm";
   if (/unidad|udm/.test(label)) return "unit_of_measure";
   if (/precio.*unit|valor.*unit/.test(label)) return "unit_price";
   if (/itbis|impuesto/.test(label)) return "tax_amount";
@@ -712,10 +730,19 @@ function normalizeField(field: string, value: unknown) {
   const text = String(value ?? "").trim();
   if (field.endsWith("_amount") || field.endsWith("_snapshot"))
     return numeric(text);
-  if (field === "issue_date" || field === "payment_date")
+  if (field === "issue_date" || field === "payment_date" || field === "due_date")
     return normalizeDate(text);
   if (field === "invoice_number" || field === "ncf")
     return normalizeIdentifier(text);
+  if (field === "status") {
+    const normalized = normalizeLabel(text);
+    if (["pagado", "pagada", "paid"].includes(normalized)) return "paid";
+    if (["parcial", "pago parcial", "partial"].includes(normalized)) return "partial";
+    if (["vencido", "vencida", "overdue"].includes(normalized)) return "overdue";
+    if (["anulado", "anulada", "cancelled"].includes(normalized)) return "cancelled";
+    if (["pendiente", "emitida", "issued"].includes(normalized)) return "issued";
+    return "unknown";
+  }
   return text;
 }
 function normalizeDate(value: string) {
@@ -723,6 +750,27 @@ function normalizeDate(value: string) {
   if (!match) return value;
   const year = Number(match[3]) < 100 ? 2000 + Number(match[3]) : Number(match[3]);
   return `${year}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
+}
+
+function normalizeDateWithMonth(value: string, monthValue: string) {
+  const match = value.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  if (!match) return normalizeDate(value);
+  const monthNames = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+    "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+  ];
+  const expectedMonth = monthNames.indexOf(normalizeLabel(monthValue)) + 1;
+  if (!expectedMonth) return normalizeDate(value);
+  const first = Number(match[1]);
+  const second = Number(match[2]);
+  const year = Number(match[3]) < 100 ? 2000 + Number(match[3]) : Number(match[3]);
+  if (first === expectedMonth) {
+    return `${year}-${String(first).padStart(2, "0")}-${String(second).padStart(2, "0")}`;
+  }
+  if (second === expectedMonth) {
+    return `${year}-${String(second).padStart(2, "0")}-${String(first).padStart(2, "0")}`;
+  }
+  return normalizeDate(value);
 }
 function numeric(value: unknown) {
   if (value === null || value === undefined || value === "") return null;

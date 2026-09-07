@@ -1,0 +1,2 @@
+export type ProposedAiAction = { type: "create_activity"; input: Record<string, unknown> };
+export function parseProposedAiAction(value: unknown): ProposedAiAction | null { if (!value || typeof value !== "object" || Array.isArray(value)) return null; const action = value as Record<string, unknown>; if (action.type !== "create_activity" || !action.input || typeof action.input !== "object" || Array.isArray(action.input)) return null; return { type: "create_activity", input: action.input as Record<string, unknown> }; }

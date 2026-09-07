@@ -34,15 +34,18 @@ test("dashboard shell and KPI grid encode the required responsive safeguards", a
 });
 
 test("business and contact labels remain Spanish without changing internal identifiers", async () => {
-  const entityViews = await read("../app/app/entity-views.tsx");
+  const [entityViews, workspace] = await Promise.all([
+    read("../app/app/entity-views.tsx"),
+    read("../app/app/record-workspace.tsx"),
+  ]);
+  const source = `${entityViews}\n${workspace}`;
 
   for (const label of [
     "Nueva empresa",
     "Nuevo contacto",
     "Editar empresa",
     "Editar contacto",
-    "Información de la empresa",
-    "Información del contacto",
+    "Acerca de",
     "Empresa",
     "Contacto",
     "Correo",
@@ -53,7 +56,7 @@ test("business and contact labels remain Spanish without changing internal ident
     "Notas",
   ]) {
     assert.match(
-      entityViews,
+      source,
       new RegExp(`>\\s*${label}\\s*<|\"${label}\"`),
     );
   }
@@ -68,14 +71,15 @@ test("business and contact labels remain Spanish without changing internal ident
     ">Phone<",
     ">Notes<",
   ]) {
-    assert.doesNotMatch(entityViews, new RegExp(visibleEnglishLabel));
+    assert.doesNotMatch(source, new RegExp(visibleEnglishLabel));
   }
 });
 
 test("navigation, profile, pipeline, and activities expose accessible Spanish UI", async () => {
-  const [css, shell, crm] = await Promise.all([
+  const [css, shell, navigation, crm] = await Promise.all([
     read("../app/globals.css"),
     read("../app/app/operations-client.tsx"),
+    read("../app/app/navigation.tsx"),
     read("../app/lib/crm.ts"),
   ]);
 
@@ -86,7 +90,7 @@ test("navigation, profile, pipeline, and activities expose accessible Spanish UI
     "Actividades",
     "Calendario",
   ]) {
-    assert.match(shell, new RegExp(`label="${label}"`));
+    assert.match(navigation, new RegExp(`label: "${label}"`));
   }
   assert.match(shell, /aria-haspopup="menu"/);
   assert.match(shell, /role="menuitem"/);
@@ -99,4 +103,38 @@ test("navigation, profile, pipeline, and activities expose accessible Spanish UI
   assert.match(crm, /new:\s*"Nuevo"/);
   assert.match(crm, /converted:\s*"Convertido"/);
   assert.match(crm, /negotiation_review:\s*"Negociación \/ revisión"/);
+});
+
+test("record detail workspace preserves relationship and permission surfaces", async () => {
+  const [workspace, businessApi, contactApi] = await Promise.all([
+    read("../app/app/record-workspace.tsx"),
+    read("../app/api/businesses/[id]/route.ts"),
+    read("../app/api/contacts/[id]/route.ts"),
+  ]);
+  for (const marker of [
+    "record-workspace",
+    "record-summary-panel",
+    "record-center-panel",
+    "record-related-panel",
+    "role=\"tablist\"",
+    "aria-selected",
+    "related-count",
+    "onArchived",
+    "Eliminar",
+    'label: "Proyectos"',
+    'label: "Oportunidades"',
+    'label: "Cotizaciones"',
+    'label: "Facturas"',
+    'label: "Casos"',
+    'title="Actividades"',
+    'title="Historial"',
+    'key: "business"',
+    'view: "businesses"',
+  ]) {
+    assert.match(workspace, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  for (const relation of ["invoices", "cases", "history"]) {
+    assert.match(businessApi, new RegExp(relation));
+    assert.match(contactApi, new RegExp(relation));
+  }
 });

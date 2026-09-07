@@ -1,9 +1,9 @@
-import { and, desc, eq, isNull, like, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, or } from "drizzle-orm";
 import { getDb } from "../../../db";
 import { businessRecords } from "../../../db/schema";
-import { authorizeApi } from "../../lib/authorization";
+import { authorizeApi, can } from "../../lib/authorization";
 import { moduleSearchEntityType } from "../../lib/crm";
-import { isModuleKey } from "../../lib/modules";
+import { isModuleKey, modules, permissionModuleForLegacyRecord } from "../../lib/modules";
 import { writeAudit } from "../../lib/audit";
 import { upsertSearchDocument } from "../../lib/search";
 
@@ -23,8 +23,20 @@ export async function GET(request: Request) {
     return Response.json({ error: "Módulo no válido." }, { status: 400 });
   }
 
+  const allowedModules = modules.map((item) => item.key).filter((item) => {
+    const permissionModule = permissionModuleForLegacyRecord(item);
+    return permissionModule && can(auth.user, permissionModule, "view");
+  });
+  if (moduleKey) {
+    const permissionModule = permissionModuleForLegacyRecord(moduleKey);
+    if (!permissionModule || !can(auth.user, permissionModule, "view")) {
+      return Response.json({ error: "No tienes permiso para consultar este módulo." }, { status: 403 });
+    }
+  }
+
   const db = getDb();
   const filters = [isNull(businessRecords.archivedAt)];
+  filters.push(inArray(businessRecords.module, allowedModules));
   if (moduleKey) filters.push(eq(businessRecords.module, moduleKey));
   if (search) {
     const term = `%${search.replaceAll("%", "")}%`;
@@ -48,12 +60,6 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const auth = await authorizeApi();
-  if (!auth.ok) return auth.response;
-  if (auth.user.role === "viewer") {
-    return Response.json({ error: "Acceso de solo lectura." }, { status: 403 });
-  }
-
   const payload = (await request.json()) as Record<string, unknown>;
   const moduleKey = String(payload.module ?? "");
   const title = String(payload.title ?? "").trim();
@@ -63,6 +69,9 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  const permissionModule = permissionModuleForLegacyRecord(moduleKey)!;
+  const auth = await authorizeApi({ module: permissionModule, action: "create" });
+  if (!auth.ok) return auth.response;
 
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
