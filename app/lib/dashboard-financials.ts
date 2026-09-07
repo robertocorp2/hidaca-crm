@@ -1,5 +1,7 @@
 import { getD1 } from "../../db";
 
+export { calculateDashboardInvoiceBalance } from "./dashboard-financial-policy";
+
 /**
  * Returns the dashboard outstanding balance from the normalized invoice and
  * payment model. Legacy invoices are included only until they are promoted.
