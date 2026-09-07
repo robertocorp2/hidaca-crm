@@ -1,0 +1,21 @@
+{
+  "name": "hidaca-prospecting-worker",
+  "main": "worker/prospecting.ts",
+  "compatibility_date": "2026-09-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "triggers": { "crons": ["* * * * *"] },
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "vars": {
+    "PROSPECTING_TENANT_ALLOWLIST": "",
+    "PROSPECTING_DISCOVERY_ENABLED": "false",
+    "PROSPECTING_ENRICHMENT_ENABLED": "false",
+    "PROSPECTING_SCORING_ENABLED": "false",
+    "PROSPECTING_AUDIT_ENABLED": "false",
+    "PROSPECTING_CRM_ENABLED": "false",
+    "PROSPECTING_DISABLED_PROVIDERS": ""
+  },
+  "d1_databases": [{
+    "binding": "DB", "database_name": "site-creator-d1",
+    "database_id": "00000000-0000-4000-8000-000000000000", "migrations_dir": "drizzle"
+  }]
+}

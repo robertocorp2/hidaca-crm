@@ -24,6 +24,13 @@ function localBindingConfig(includeLocalFeatureDefaults: boolean) {
             process.env.INVOICE_IMPORT_PHASE1_ENABLED ?? "false",
           INVOICE_PRODUCTION_IMPORT_ENABLED:
             process.env.INVOICE_PRODUCTION_IMPORT_ENABLED ?? "false",
+          PROSPECTING_TENANT_ALLOWLIST: process.env.PROSPECTING_TENANT_ALLOWLIST ?? "",
+          PROSPECTING_DISCOVERY_ENABLED: process.env.PROSPECTING_DISCOVERY_ENABLED ?? "false",
+          PROSPECTING_ENRICHMENT_ENABLED: process.env.PROSPECTING_ENRICHMENT_ENABLED ?? "false",
+          PROSPECTING_SCORING_ENABLED: process.env.PROSPECTING_SCORING_ENABLED ?? "false",
+          PROSPECTING_AUDIT_ENABLED: process.env.PROSPECTING_AUDIT_ENABLED ?? "false",
+          PROSPECTING_CRM_ENABLED: process.env.PROSPECTING_CRM_ENABLED ?? "false",
+          PROSPECTING_DISABLED_PROVIDERS: process.env.PROSPECTING_DISABLED_PROVIDERS ?? "",
         },
       }
     : {}),

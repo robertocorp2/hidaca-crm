@@ -1,6 +1,6 @@
 # Prospecting Intelligence architecture
 
-> **Status:** Proposed target-state architecture for review. HIDACA CRM does not yet contain the Prospecting Intelligence implementation, so the rules below describe the system to build rather than current runtime behavior.
+> **Status:** Implemented behind disabled runtime flags. The target architecture below remains the design contract. The implementation uses Cloudflare D1 and a separate scheduled Worker, with HIDACA's native CRM adapter. See [release proof](./release-proof.md) for verified acceptance criteria and remaining browser/provider release gates, and the [runbook](./runbook.md) for exact operational behavior and deliberate limitations.
 
 ## Executive summary
 

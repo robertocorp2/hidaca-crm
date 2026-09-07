@@ -1,6 +1,6 @@
 # Prospecting Intelligence implementation plan
 
-> **Status:** Ordered execution plan for the proposed architecture in [architecture.md](./architecture.md).
+> **Status:** Implementation delivered behind disabled flags. [Release proof](./release-proof.md) maps all nine tasks to source and tests and records the remaining browser/live-provider release gates. The acceptance criteria below remain the delivery contract.
 
 ## Delivery rules
 
