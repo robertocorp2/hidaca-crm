@@ -1,6 +1,6 @@
 # Prospecting Intelligence release proof
 
-Implementation: branch `codex/prospecting-intelligence`, based on `docs/prospecting-intelligence-plan`. Status: implemented and synthetically verified behind disabled flags; **browser and live-provider release verification remain open**. Nothing has been deployed or enabled in production.
+Implementation: branch `codex/prospecting-intelligence`, based on `docs/prospecting-intelligence-plan`. Status: implemented and synthetically verified behind disabled flags; local desktop/mobile browser fallback verification is complete, while live-provider release verification remains open. Nothing has been deployed or enabled in production.
 
 ## Acceptance evidence
 
@@ -11,7 +11,7 @@ Implementation: branch `codex/prospecting-intelligence`, based on `docs/prospect
 | 3. Discovery | Google Places Text/Nearby adapters and cached search service | Explicit masks, pagination, radius, partial/empty results, typed errors, cached identity, tenant isolation; live sandbox attribution check still open |
 | 4. Enrichment | PageSpeed, BuiltWith, Hunter, optional-provider port, separate worker | Current-schema fixtures, public DNS/URL checks, redirects denied, bounded JSON, timeout, partial provider failure, AES-GCM tenant binding and erasure |
 | 5. Scoring | Pure versioned Digital Health/Opportunity rules | Reproducibility, unknowns, low coverage suppression, configuration, range properties, stale evidence; trust/technology limits explicitly documented |
-| 6. UI/API | Spanish search/results/detail/evidence/audits/settings and authenticated `/v1` route | API authorization/state tests, type check, production route artifact checks; browser layout, keyboard, and interaction proof pending |
+| 6. UI/API | Spanish search/results/detail/evidence/audits/settings and authenticated `/v1` route | API authorization/state tests, type check, production route artifact checks, local desktop/mobile fallback browser checks for disabled/empty/focus states; live provider success and conversion remain untested |
 | 7. CRM | Native HIDACA port, preview, fingerprint, durable company/contact/opportunity/pipeline operations | Repeated conversion creates one CRM set, normalized dedup, partial recovery, reviewed mapping repair, repaired outbox replay, tenant isolation |
 | 8. Bulk | Selection, bounded enrichment/audit, per-item outcomes, cancellation | Maximum 50 prospects/200 jobs, mixed outcomes, concurrent queue capacity, duplicate requests, cancellation and budget fixtures |
 | 9. Release controls | Admin metrics/alerts, provider/runtime gates, allowlist, runbook | Full automated suite, real workerd D1 workflow, worker dry run; live-provider cost/retention and browser gates remain open |
@@ -37,7 +37,7 @@ Independent review identified and prompted regression fixes for formatted legacy
 
 ## Open release gates
 
-1. **Browser verification:** Chrome DevTools MCP required by the applied `browser-verify` skill was unavailable. Permission to use available browser tools/Playwright was requested; no browser result is claimed. Required checks: desktop/mobile, keyboard bulk selection, empty/loading/partial/stale/denied/failed states, evidence links, retry progress, and console/network errors.
+1. **Browser verification:** Chrome DevTools MCP was unavailable, so the authorized Playwright/CUA fallback was used. Desktop rendering, the disabled-organization state, empty results, form interaction, keyboard focus, and the root responsive viewport declaration were verified locally. Provider success, loading/partial/stale/failed result panels, evidence links, retry progress, and lead conversion still require a flagged staging provider run.
 2. **Live sandbox providers:** No provider credentials or paid calls were used. Confirm applicable storage/use rights first, configure staging-only secrets and a small budget, then run the documented search → enrichment → audit → repeated conversion smoke test while inspecting provider cost dashboards.
 3. **Google storage policy:** Immutable normalized Google listing persistence is an explicit deployment constraint. A cache TTL does not establish permitted storage. Do not enable live discovery without permission under the applicable agreement or a revised storage design.
 
