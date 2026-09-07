@@ -18,6 +18,7 @@ export class WorkerRuntime {
     const policy = effectivePolicy(await this.repo.policy(tenantId), tenantId, this.switches);
     // Privacy cleanup must continue while every feature is switched off.
     await this.repo.statement("DELETE FROM pi_contact_vault WHERE tenant_id=? AND expires_at<=?", tenantId, new Date().toISOString()).run();
+    await this.repo.statement("DELETE FROM pi_place_context WHERE tenant_id=? AND expires_at<=?", tenantId, new Date().toISOString()).run();
     await this.repo.statement("DELETE FROM pi_events WHERE tenant_id=? AND created_at<?", tenantId, new Date(Date.now() - policy.retentionDays * 86400000).toISOString()).run();
     await this.repo.statement("DELETE FROM pi_budgets WHERE tenant_id=? AND window<?", tenantId, new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10)).run();
     await this.repo.statement("DELETE FROM pi_budget_reservations WHERE tenant_id=? AND window<?", tenantId, new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10)).run();
