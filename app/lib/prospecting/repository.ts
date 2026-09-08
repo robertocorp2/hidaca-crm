@@ -25,7 +25,7 @@ export class Repository implements ProspectRepository {
     if (cached && cached.expiresAt <= now) this.placeContext.delete(`${tenantId}:${id}`);
     const context = cached && cached.expiresAt > now ? { context: JSON.stringify(cached.facts) } : await this.one<{ context: string }>("SELECT context FROM pi_place_context WHERE tenant_id=? AND prospect_id=? AND expires_at>?", tenantId, id, now);
     const googleFacts = context ? JSON.parse(context.context) : {};
-    return { ...this.emptyFacts(placeId), ...crmFacts, ...googleFacts, placeId, id: row.id, tenantId, identityKey: row.identity_key, firstSeen: row.first_seen, lastSeen: row.last_seen };
+    return { ...this.emptyFacts(placeId), ...crmFacts, ...googleFacts, placeId, independentWebsite: typeof crmFacts.website === "string" ? crmFacts.website : "", id: row.id, tenantId, identityKey: row.identity_key, firstSeen: row.first_seen, lastSeen: row.last_seen };
   }
   async canonicalize(context: Context, facts: BusinessFacts): Promise<Prospect> {
     const keys = await identityKeys(facts), now = new Date().toISOString(), candidate = `p_${await hash([context.tenantId, keys[0]])}`;

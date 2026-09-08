@@ -136,8 +136,8 @@ export function mapHunter(data: Json): EvidenceData {
 export class ProviderAdapter implements EnrichmentPort {
   constructor(public provider: Exclude<Provider, "google_places" | "hunter">, private key: string, private http: Http = fetch) {}
   async enrich(prospect: Prospect): Promise<ProviderResult> {
-    if (!prospect.website) return { data: {}, status: "missing", providerVersion: "v1", ttlSeconds: 86400 };
-    const website = publicWebsite(prospect.website);
+    if (!prospect.independentWebsite) return { data: {}, status: "policy_blocked", providerVersion: "policy-v1", ttlSeconds: 3600 };
+    const website = publicWebsite(prospect.independentWebsite);
     if (!this.key) throw new ProspectingError("unauthorized");
     await validatePublicDns(website, this.http);
     if (this.provider === "pagespeed") {
@@ -155,10 +155,10 @@ export class HunterAdapter implements ContactPort {
   provider = "hunter" as const;
   constructor(private key: string, private http: Http = fetch) {}
   async enrich(prospect: Prospect): Promise<ProviderResult> {
-    if (!prospect.website) return { data: {}, status: "missing", providerVersion: "v2", ttlSeconds: 86400 };
+    if (!prospect.independentWebsite) return { data: {}, status: "policy_blocked", providerVersion: "policy-v1", ttlSeconds: 3600 };
     if (!this.key) throw new ProspectingError("unauthorized");
-    await validatePublicDns(prospect.website, this.http);
-    const query = new URLSearchParams({ domain: domainOf(prospect.website), api_key: this.key, limit: "10" });
+    await validatePublicDns(prospect.independentWebsite, this.http);
+    const query = new URLSearchParams({ domain: domainOf(prospect.independentWebsite), api_key: this.key, limit: "10" });
     const data = mapHunter(await providerJson(`https://api.hunter.io/v2/domain-search?${query}`, {}, this.http));
     return { data, status: data.contactCount ? "complete" : "missing", providerVersion: "v2", ttlSeconds: 604800 };
   }

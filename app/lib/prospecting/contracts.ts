@@ -24,6 +24,9 @@ export interface BusinessFacts {
 }
 export interface Prospect extends BusinessFacts {
   id: string; tenantId: string; identityKey: string; firstSeen: string; lastSeen: string;
+  /** Only populated from independently verified CRM facts, never from the
+   * temporary Google listing context. */
+  independentWebsite?: string;
 }
 export interface EvidenceData {
   performance?: number; accessibility?: number; seo?: number; trust?: number; technology?: number;
@@ -75,6 +78,10 @@ export interface TenantPolicy {
 export interface ConversionMapping {
   prospectId: string; companyId: string | null; contactId: string | null; contactName: string;
   opportunityTitle: string; reviewed: boolean;
+  /** Values entered or independently verified by the operator. Google listing
+   * content must never be copied into durable CRM fields. */
+  companyName?: string; companyAddress?: string; companyPhone?: string; companyWebsite?: string;
+  contactPhone?: string;
 }
 export interface CrmMatch { id: string; name: string; signals: string[]; confidence: "exact" | "review" }
 export interface ConversionPreview {

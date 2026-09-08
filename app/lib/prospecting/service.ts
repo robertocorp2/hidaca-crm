@@ -1,5 +1,5 @@
 import { ProspectingError, type Context, type ConversionMapping, type Feature, type Job, type Provider, type ScoreSnapshot, type TenantPolicy } from "./contracts";
-import { authorize, hash, idempotencyKey, object, parseSearch, requireFeature, text, validatePolicy } from "./domain";
+import { authorize, hash, idempotencyKey, object, parseSearch, requireFeature, safeLink, text, validatePolicy } from "./domain";
 import { HidacaCrm } from "./crm";
 import { Repository } from "./repository";
 
@@ -131,7 +131,10 @@ export class ProspectingService {
   }
   mapping(prospectId: string, value: unknown): ConversionMapping {
     const p = object(value);
-    return { prospectId, companyId: text(p.companyId, 100) || null, contactId: text(p.contactId, 100) || null, contactName: text(p.contactName, 180), opportunityTitle: text(p.opportunityTitle, 200), reviewed: p.reviewed === true };
+    return { prospectId, companyId: text(p.companyId, 100) || null, contactId: text(p.contactId, 100) || null,
+      contactName: text(p.contactName, 180), opportunityTitle: text(p.opportunityTitle, 200), reviewed: p.reviewed === true,
+      companyName: text(p.companyName, 200), companyAddress: text(p.companyAddress, 500), companyPhone: text(p.companyPhone, 80),
+      companyWebsite: safeLink(text(p.companyWebsite, 2048)), contactPhone: text(p.contactPhone, 80) };
   }
   async preview(context: Context, input: unknown) {
     authorize(context, true); const p = object(input), policy = await this.policy(context); requireFeature(policy, "crm");

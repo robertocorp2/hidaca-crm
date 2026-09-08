@@ -71,12 +71,13 @@ export class HidacaCrm implements CrmPort {
     const selectedContact = contactMatches.find(c => c.id === mapping.contactId);
     if (mapping.contactId && (!selectedContact || selectedContact.signals.includes("different_company"))) conflicts.push("El contacto debe pertenecer a la empresa seleccionada.");
     if ([...companies.filter(c => c.id === companyId), ...contactMatches.filter(c => c.id === mapping.contactId)].some(c => c.confidence === "review") && !mapping.reviewed) conflicts.push("Confirma la revisión de coincidencias ambiguas.");
-    if (!prospect.name) missing.push("Nombre de empresa");
+    // A new CRM record may be created with blank business fields; the temporary
+    // Google listing is never copied into durable CRM columns. Operators can
+    // enter independently verified values in the conversion form when known.
     if (!mapping.contactName && !mapping.contactId) missing.push("Nombre del contacto general");
-    if (!prospect.phone && !mapping.contactId) missing.push("Teléfono del negocio para el contacto general");
     if (!mapping.opportunityTitle) missing.push("Título de oportunidad");
     const existingOpportunity = await this.findOpportunity(context, prospect);
-    const result = { prospectId: prospect.id, company: { name: prospect.name, matches: companies, action: companies.length && !companyId ? "review" as const : companyId ? "reuse" as const : "create" as const },
+    const result = { prospectId: prospect.id, company: { name: input.companyName || prospect.name || `Place ID ${prospect.placeId}`, matches: companies, action: companies.length && !companyId ? "review" as const : companyId ? "reuse" as const : "create" as const },
       contact: { name: mapping.contactName, matches: contactMatches, action: contactMatches.length && !mapping.contactId ? "review" as const : mapping.contactId ? "reuse" as const : "create" as const },
       opportunity: { title: mapping.opportunityTitle, action: existingOpportunity ? "reuse" as const : "create" as const }, pipeline: await this.ensurePipeline(context), missing, conflicts, mapping };
     return { ...result, fingerprint: await hash([prospect.id, prospect.lastSeen, result]) };
@@ -101,7 +102,7 @@ export class HidacaCrm implements CrmPort {
     const id = mapping.companyId ?? `pi_b_${await hash([context.tenantId, prospect.identityKey])}`, now = new Date().toISOString();
     return this.perform(context, exportId, "company", 1, id, [
       ...(!mapping.companyId ? [this.repo.statement(`INSERT INTO businesses(id,name,normalized_name,phone,address,source_metadata,owner_email,created_by,created_at,updated_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`, id, prospect.name, normalize(prospect.name), prospect.phone, prospect.address, JSON.stringify({ prospectId: prospect.id, domain: prospect.domain, source: "prospecting" }), context.actor, context.actor, now, now), this.index(context, "business", id, prospect.name, prospect.phone)] : []),
+        VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`, id, mapping.companyName ?? "", normalize(mapping.companyName ?? ""), mapping.companyPhone ?? "", mapping.companyAddress ?? "", JSON.stringify({ prospectId: prospect.id, placeId: prospect.placeId, domain: mapping.companyWebsite ? new URL(mapping.companyWebsite).hostname.replace(/^www\./, "").toLowerCase() : "", source: "operator_verified" }), context.actor, context.actor, now, now), this.index(context, "business", id, mapping.companyName ?? `Place ID ${prospect.placeId}`, mapping.companyPhone ?? "")] : []),
       this.link(context, "company", prospect.identityKey, id),
     ]);
   }
@@ -110,7 +111,7 @@ export class HidacaCrm implements CrmPort {
     const id = mapping.contactId ?? `pi_c_${await hash([context.tenantId, prospect.identityKey])}`, now = new Date().toISOString();
     return this.perform(context, exportId, "contact", 2, id, [
       ...(!mapping.contactId ? [this.repo.statement(`INSERT INTO contacts(id,business_id,name,normalized_name,phone,normalized_phone,title,source_metadata,owner_email,created_by,created_at,updated_at)
-        VALUES(?,?,?,?,?,?,'Contacto general',?,?,?,?,?) ON CONFLICT(id) DO NOTHING`, id, companyId, mapping.contactName, normalize(mapping.contactName), prospect.phone, normalizePhone(prospect.phone), JSON.stringify({ prospectId: prospect.id, source: "prospecting", contactType: "general_business" }), context.actor, context.actor, now, now), this.index(context, "contact", id, mapping.contactName, prospect.phone)] : []),
+        VALUES(?,?,?,?,?,?,'Contacto general',?,?,?,?,?) ON CONFLICT(id) DO NOTHING`, id, companyId, mapping.contactName, normalize(mapping.contactName), mapping.contactPhone ?? "", normalizePhone(mapping.contactPhone ?? ""), JSON.stringify({ prospectId: prospect.id, placeId: prospect.placeId, source: "operator_verified", contactType: "general_business" }), context.actor, context.actor, now, now), this.index(context, "contact", id, mapping.contactName, mapping.contactPhone ?? "")] : []),
       this.link(context, "contact", `${prospect.identityKey}:general`, id),
     ]);
   }
@@ -122,7 +123,7 @@ export class HidacaCrm implements CrmPort {
         VALUES(?,?,?,?,'evaluation',?,'Prospecting: oportunidad estimada; sin inferencia de intención de compra.',?,?,?) ON CONFLICT(id) DO NOTHING`, id, mapping.opportunityTitle, companyId, contactId, context.actor, context.actor, now, now),
       this.repo.statement(`INSERT INTO opportunity_stage_history(opportunity_id,to_stage,changed_by,changed_at,note)
         SELECT ?,'evaluation',?,?,'Prospecting: conversión confirmada' WHERE NOT EXISTS(SELECT 1 FROM opportunity_stage_history WHERE opportunity_id=?)`, id, context.actor, now, id),
-      this.link(context, "opportunity", prospect.identityKey, id), this.index(context, "opportunity", id, mapping.opportunityTitle, prospect.name),
+      this.link(context, "opportunity", prospect.identityKey, id), this.index(context, "opportunity", id, mapping.opportunityTitle, mapping.companyName || `Place ID ${prospect.placeId}`),
     ]);
   }
   async convert(context: Context, prospect: Prospect, mapping: ConversionMapping, exportId: string) {
