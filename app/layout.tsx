@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -10,6 +10,11 @@ export const metadata: Metadata = {
     "Sistema privado de CRM, empresas, contactos, proyectos y finanzas de HIDACA Constructora.",
   robots: { index: false, follow: false },
   icons: { icon: "/favicon.svg", shortcut: "/favicon.ico" },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({
