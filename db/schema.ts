@@ -1,4 +1,5 @@
-import { sql } from "drizzle-orm";`r`nexport * from "./prospecting-schema";
+import { sql } from "drizzle-orm";
+export * from "./prospecting-schema";
 import {
   type AnySQLiteColumn,
   check,
@@ -2822,4 +2823,5 @@ export const dailyReportDocuments = sqliteTable("daily_report_documents", {
   caption: text("caption").notNull().default(""),
   createdAt: text("created_at").notNull(),
 }, (table) => [uniqueIndex("daily_report_documents_unique").on(table.reportId, table.documentId), index("daily_report_documents_report_idx").on(table.reportId)]);
+
 

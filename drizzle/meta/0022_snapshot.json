@@ -2,7 +2,7 @@
   "version": "6",
   "dialect": "sqlite",
   "id": "ddfe34ea-db7f-4210-b48c-3571655f6d64",
-  "prevId": "d484d757-d8f0-4d7f-9031-9ba855f700db",
+  "prevId": "c7a36ba9-2ba6-4dd3-a35c-cefb08a99cfc",
   "tables": {
     "activities": {
       "name": "activities",
@@ -261,7 +261,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'Rep\u00fablica Dominicana'"
+          "default": "'República Dominicana'"
         },
         "is_primary": {
           "name": "is_primary",
