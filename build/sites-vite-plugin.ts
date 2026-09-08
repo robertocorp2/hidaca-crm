@@ -42,6 +42,24 @@ export async function packageSitesArtifacts(
         );
       },
     });
+    const packagedMigrations = resolve(outputDirectory, "drizzle");
+    const migrationFiles = (await import("node:fs/promises")).readdir(
+      packagedMigrations,
+      { withFileTypes: true },
+    );
+    for (const entry of await migrationFiles) {
+      if (!entry.isFile() || !/^\d{4}_[^/]+\.sql$/.test(entry.name)) continue;
+      const filename = resolve(packagedMigrations, entry.name);
+      const source = await readFile(filename, "utf8");
+      await writeFile(
+        filename,
+        source.replaceAll(
+          ";--> statement-breakpoint",
+          ";\n--> statement-breakpoint\n",
+        ),
+        "utf8",
+      );
+    }
   }
 
   const workerArtifactsPresent =

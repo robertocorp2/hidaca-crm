@@ -1,5 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { access, cp, mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import {
+  access,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -83,9 +92,19 @@ export async function packageSitesArchive(projectRoot, outputArchive) {
     await mkdir(stagedMetadataDirectory, { recursive: true });
 
     for (const migrationName of migrationNames) {
+      const migrationPath = path.join(stagedDrizzleDirectory, migrationName);
       await cp(
         path.join(sourceDrizzleDirectory, migrationName),
-        path.join(stagedDrizzleDirectory, migrationName),
+        migrationPath,
+      );
+      const source = await readFile(migrationPath, "utf8");
+      await writeFile(
+        migrationPath,
+        source.replaceAll(
+          ";--> statement-breakpoint",
+          ";\n--> statement-breakpoint\n",
+        ),
+        "utf8",
       );
     }
     await cp(
