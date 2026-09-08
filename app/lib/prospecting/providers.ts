@@ -16,11 +16,10 @@ export async function providerJson(url: string, init: RequestInit = {}, http: Ht
   if (!allowedHosts.has(new URL(url).hostname) || new URL(url).protocol !== "https:") throw new ProspectingError("policy_blocked");
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeout);
   try {
-    // Cloudflare's fetch runtime can throw a TypeError for `redirect: "error"`
-    // even when the upstream returns a normal 200 response. These provider
-    // endpoints are fixed allow-listed origins, so reject redirects explicitly
-    // after using manual handling rather than following them.
-    const response = await http(url, { ...init, signal: controller.signal, redirect: "manual" });
+    // Cloudflare's fetch runtime can throw for explicit redirect modes on an
+    // otherwise valid provider response. These endpoints are fixed allow-listed
+    // origins; reject any redirect response if one is returned.
+    const response = await http(url, { ...init, signal: controller.signal });
     if (response.status >= 300 && response.status < 400) throw new ProspectingError("policy_blocked");
     if (!response.ok || response.status === 202) throw providerError(response.status === 202 ? 503 : response.status, Number(response.headers.get("retry-after")) || 0);
     if (!/\b(json|dns-json)\b/i.test(response.headers.get("content-type") ?? "")) throw new ProspectingError("unavailable");
