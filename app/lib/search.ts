@@ -70,9 +70,12 @@ export async function deleteSearchDocument(
 export async function searchBusinessData(
   query: string,
   limit = 40,
+  allowedEntityTypes: readonly string[] = [],
 ): Promise<SearchResult[]> {
   const ftsQuery = toFtsQuery(query);
-  if (!ftsQuery) return [];
+  if (!ftsQuery || allowedEntityTypes.length === 0) return [];
+
+  const placeholders = allowedEntityTypes.map(() => "?").join(", ");
 
   const result = await getD1()
     .prepare(
@@ -85,10 +88,11 @@ export async function searchBusinessData(
        FROM search_documents_fts
        JOIN search_documents d ON d.row_id = search_documents_fts.rowid
        WHERE search_documents_fts MATCH ?
+         AND d.entity_type IN (${placeholders})
        ORDER BY rank, d.updated_at DESC
        LIMIT ?`,
     )
-    .bind(ftsQuery, Math.min(Math.max(limit, 1), 60))
+    .bind(ftsQuery, ...allowedEntityTypes, Math.min(Math.max(limit, 1), 60))
     .all<SearchResult>();
 
   return result.results;

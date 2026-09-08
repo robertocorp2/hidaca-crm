@@ -27,6 +27,36 @@ export const staffUsers = sqliteTable(
   (table) => [uniqueIndex("staff_users_email_unique").on(table.email)],
 );
 
+export const rolePermissions = sqliteTable(
+  "role_permissions",
+  {
+    role: text("role", { enum: ["admin", "operator", "viewer"] }).notNull(),
+    module: text("module").notNull(),
+    action: text("action", { enum: ["view", "create", "edit", "delete", "administer"] }).notNull(),
+    allowed: integer("allowed", { mode: "boolean" }).notNull().default(false),
+  },
+  (table) => [
+    primaryKey({ columns: [table.role, table.module, table.action] }),
+    index("role_permissions_role_idx").on(table.role),
+  ],
+);
+
+export const userPermissionOverrides = sqliteTable(
+  "user_permission_overrides",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => staffUsers.id, { onDelete: "cascade" }),
+    module: text("module").notNull(),
+    action: text("action", { enum: ["view", "create", "edit", "delete", "administer"] }).notNull(),
+    effect: text("effect", { enum: ["allow", "deny"] }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.module, table.action] }),
+    index("user_permission_overrides_user_idx").on(table.userId),
+  ],
+);
+
 export const businessRecords = sqliteTable("business_records", {
   id: text("id").primaryKey(),
   module: text("module").notNull(),
@@ -154,6 +184,9 @@ export const contacts = sqliteTable(
     normalizedMobilePhone: text("normalized_mobile_phone")
       .notNull()
       .default(""),
+    whatsappConsent: text("whatsapp_consent", { enum: ["unknown", "opted_in", "opted_out"] }).notNull().default("unknown"),
+    whatsappConsentAt: text("whatsapp_consent_at"),
+    whatsappConsentSource: text("whatsapp_consent_source").notNull().default(""),
     title: text("title").notNull().default(""),
     notes: text("notes").notNull().default(""),
     sourceMetadata: text("source_metadata").notNull().default("{}"),
@@ -339,6 +372,9 @@ export const leads = sqliteTable(
     normalizedEmail: text("normalized_email").notNull().default(""),
     phone: text("phone").notNull().default(""),
     normalizedPhone: text("normalized_phone").notNull().default(""),
+    whatsappConsent: text("whatsapp_consent", { enum: ["unknown", "opted_in", "opted_out"] }).notNull().default("unknown"),
+    whatsappConsentAt: text("whatsapp_consent_at"),
+    whatsappConsentSource: text("whatsapp_consent_source").notNull().default(""),
     source: text("source").notNull().default(""),
     status: text("status", {
       enum: ["new", "contacted", "working", "unqualified", "converted"],
@@ -1831,6 +1867,264 @@ export const invoiceLines = sqliteTable(
   ],
 );
 
+/**
+ * DGII e-CF compliance records. These tables intentionally sit beside the
+ * operational invoice model: an accepted/signed fiscal document is an
+ * immutable snapshot and never replaces the commercial invoice.
+ */
+export const ecfIssuerProfiles = sqliteTable(
+  "ecf_issuer_profiles",
+  {
+    id: text("id").primaryKey(),
+    environment: text("environment", { enum: ["test", "certification", "production"] }).notNull(),
+    legalName: text("legal_name").notNull().default(""),
+    rnc: text("rnc").notNull(),
+    commercialName: text("commercial_name").notNull().default(""),
+    fiscalAddress: text("fiscal_address").notNull().default(""),
+    provinceCode: text("province_code").notNull().default(""),
+    municipalityCode: text("municipality_code").notNull().default(""),
+    phone: text("phone").notNull().default(""),
+    email: text("email").notNull().default(""),
+    softwareName: text("software_name").notNull().default("HIDACA Constructora"),
+    softwareVersion: text("software_version").notNull().default(""),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+    createdBy: text("created_by").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("ecf_issuer_profiles_environment_rnc_unique").on(table.environment, table.rnc),
+    index("ecf_issuer_profiles_enabled_idx").on(table.enabled),
+  ],
+);
+
+export const ecfPartyProfiles = sqliteTable(
+  "ecf_party_profiles",
+  {
+    id: text("id").primaryKey(),
+    businessId: text("business_id").notNull().references(() => businesses.id, { onDelete: "cascade" }),
+    identityType: text("identity_type").notNull().default("RNC"),
+    identityValue: text("identity_value").notNull().default(""),
+    fiscalAddress: text("fiscal_address").notNull().default(""),
+    provinceCode: text("province_code").notNull().default(""),
+    municipalityCode: text("municipality_code").notNull().default(""),
+    receiverType: text("receiver_type").notNull().default(""),
+    electronicEmail: text("electronic_email").notNull().default(""),
+    verified: integer("verified", { mode: "boolean" }).notNull().default(false),
+    createdBy: text("created_by").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("ecf_party_profiles_business_unique").on(table.businessId),
+    index("ecf_party_profiles_identity_idx").on(table.identityValue),
+  ],
+);
+
+export const ecfSequenceRanges = sqliteTable(
+  "ecf_sequence_ranges",
+  {
+    id: text("id").primaryKey(),
+    issuerProfileId: text("issuer_profile_id").notNull().references(() => ecfIssuerProfiles.id, { onDelete: "restrict" }),
+    environment: text("environment", { enum: ["test", "certification", "production"] }).notNull(),
+    ecfType: text("ecf_type").notNull(),
+    prefix: text("prefix").notNull().default("E"),
+    startNumber: integer("start_number").notNull(),
+    endNumber: integer("end_number").notNull(),
+    nextNumber: integer("next_number").notNull(),
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+    createdBy: text("created_by").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("ecf_sequence_ranges_identity_unique").on(table.issuerProfileId, table.environment, table.ecfType, table.prefix),
+    index("ecf_sequence_ranges_active_idx").on(table.active),
+    check("ecf_sequence_ranges_bounds_check", sql`${table.startNumber} <= ${table.nextNumber} AND ${table.nextNumber} <= ${table.endNumber} + 1`),
+  ],
+);
+
+export const ecfSequenceAllocations = sqliteTable(
+  "ecf_sequence_allocations",
+  {
+    id: text("id").primaryKey(),
+    sequenceRangeId: text("sequence_range_id").notNull().references(() => ecfSequenceRanges.id, { onDelete: "restrict" }),
+    ecfDocumentId: text("ecf_document_id").references(() => ecfDocuments.id, { onDelete: "set null" }),
+    encf: text("encf").notNull(),
+    allocatedAt: text("allocated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("ecf_sequence_allocations_encf_unique").on(table.encf),
+    index("ecf_sequence_allocations_range_idx").on(table.sequenceRangeId, table.allocatedAt),
+  ],
+);
+
+export const ecfDocuments = sqliteTable(
+  "ecf_documents",
+  {
+    id: text("id").primaryKey(),
+    sourceInvoiceId: text("source_invoice_id").notNull().references(() => invoices.id, { onDelete: "restrict" }),
+    sourceCreditNoteId: text("source_credit_note_id").references(() => creditNotes.id, { onDelete: "restrict" }),
+    sourceDebitNoteId: text("source_debit_note_id"),
+    parentEcfId: text("parent_ecf_id").notNull().default(""),
+    issuerProfileId: text("issuer_profile_id").notNull().references(() => ecfIssuerProfiles.id, { onDelete: "restrict" }),
+    environment: text("environment", { enum: ["test", "certification", "production"] }).notNull(),
+    ecfType: text("ecf_type").notNull(),
+    encf: text("encf").notNull(),
+    status: text("status", { enum: ["draft", "prevalidation_failed", "ready_to_generate", "generated", "xml_invalid", "ready_to_sign", "signed", "ready_to_submit", "submitted", "processing", "accepted", "accepted_conditionally", "rejected", "cancelled", "contingency", "submission_failed"] }).notNull().default("draft"),
+    fiscalSnapshotJson: text("fiscal_snapshot_json").notNull().default("{}"),
+    fiscalSnapshotHash: text("fiscal_snapshot_hash").notNull().default(""),
+    schemaVersion: text("schema_version").notNull().default("1.0"),
+    trackId: text("track_id").notNull().default(""),
+    securityCode: text("security_code").notNull().default(""),
+    qrData: text("qr_data").notNull().default(""),
+    signingCertificateFingerprint: text("signing_certificate_fingerprint").notNull().default(""),
+    signedAt: text("signed_at"),
+    submittedAt: text("submitted_at"),
+    lastStatusCheckAt: text("last_status_check_at"),
+    validationSummary: text("validation_summary").notNull().default("{}"),
+    createdBy: text("created_by").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("ecf_documents_encf_unique").on(table.environment, table.issuerProfileId, table.encf),
+    uniqueIndex("ecf_documents_source_type_active_unique").on(table.sourceInvoiceId, table.environment, table.ecfType, table.parentEcfId),
+    index("ecf_documents_source_invoice_idx").on(table.sourceInvoiceId),
+    index("ecf_documents_status_idx").on(table.status),
+    index("ecf_documents_track_id_idx").on(table.trackId),
+  ],
+);
+
+export const ecfArtifacts = sqliteTable(
+  "ecf_artifacts",
+  {
+    id: text("id").primaryKey(),
+    ecfDocumentId: text("ecf_document_id").notNull().references(() => ecfDocuments.id, { onDelete: "restrict" }),
+    kind: text("kind").notNull(),
+    storageKey: text("storage_key").notNull(),
+    mimeType: text("mime_type").notNull(),
+    sha256: text("sha256").notNull(),
+    byteLength: integer("byte_length").notNull().default(0),
+    version: integer("version").notNull().default(1),
+    createdBy: text("created_by").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("ecf_artifacts_version_unique").on(table.ecfDocumentId, table.kind, table.version),
+    index("ecf_artifacts_document_idx").on(table.ecfDocumentId),
+  ],
+);
+
+export const ecfValidations = sqliteTable(
+  "ecf_validations",
+  {
+    id: text("id").primaryKey(),
+    ecfDocumentId: text("ecf_document_id").notNull().references(() => ecfDocuments.id, { onDelete: "restrict" }),
+    phase: text("phase").notNull(),
+    severity: text("severity", { enum: ["error", "warning", "info"] }).notNull(),
+    code: text("code").notNull(),
+    path: text("path").notNull().default(""),
+    message: text("message").notNull(),
+    schemaVersion: text("schema_version").notNull().default("1.0"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("ecf_validations_document_idx").on(table.ecfDocumentId, table.severity)],
+);
+
+export const ecfSubmissionAttempts = sqliteTable(
+  "ecf_submission_attempts",
+  {
+    id: text("id").primaryKey(),
+    ecfDocumentId: text("ecf_document_id").notNull().references(() => ecfDocuments.id, { onDelete: "restrict" }),
+    operation: text("operation").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestArtifactId: text("request_artifact_id").references(() => ecfArtifacts.id, { onDelete: "restrict" }),
+    responseArtifactId: text("response_artifact_id").references(() => ecfArtifacts.id, { onDelete: "restrict" }),
+    httpStatus: integer("http_status"),
+    trackId: text("track_id").notNull().default(""),
+    outcome: text("outcome").notNull().default("pending"),
+    redactedError: text("redacted_error").notNull().default(""),
+    startedAt: text("started_at").notNull(),
+    finishedAt: text("finished_at"),
+  },
+  (table) => [
+    uniqueIndex("ecf_submission_attempts_idempotency_unique").on(table.ecfDocumentId, table.operation, table.idempotencyKey),
+    index("ecf_submission_attempts_document_idx").on(table.ecfDocumentId, table.startedAt),
+  ],
+);
+
+export const ecfStatusHistory = sqliteTable(
+  "ecf_status_history",
+  {
+    id: text("id").primaryKey(),
+    ecfDocumentId: text("ecf_document_id").notNull().references(() => ecfDocuments.id, { onDelete: "restrict" }),
+    fromStatus: text("from_status").notNull().default(""),
+    toStatus: text("to_status").notNull(),
+    dgiiStatus: text("dgii_status").notNull().default(""),
+    dgiiCode: text("dgii_code").notNull().default(""),
+    actorEmail: text("actor_email").notNull(),
+    attemptId: text("attempt_id").references(() => ecfSubmissionAttempts.id, { onDelete: "set null" }),
+    detail: text("detail").notNull().default(""),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("ecf_status_history_document_idx").on(table.ecfDocumentId, table.createdAt)],
+);
+
+export const ecfInboundMessages = sqliteTable(
+  "ecf_inbound_messages",
+  {
+    id: text("id").primaryKey(),
+    environment: text("environment", { enum: ["test", "certification", "production"] }).notNull(),
+    operation: text("operation").notNull(),
+    issuerRnc: text("issuer_rnc").notNull().default(""),
+    encf: text("encf").notNull().default(""),
+    messageArtifactId: text("message_artifact_id").references(() => ecfArtifacts.id, { onDelete: "restrict" }),
+    responseArtifactId: text("response_artifact_id").references(() => ecfArtifacts.id, { onDelete: "restrict" }),
+    outcome: text("outcome").notNull().default("received"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("ecf_inbound_messages_encf_idx").on(table.environment, table.encf)],
+);
+
+export const ecfDebitNotes = sqliteTable(
+  "ecf_debit_notes",
+  {
+    id: text("id").primaryKey(),
+    invoiceId: text("invoice_id").notNull().references(() => invoices.id, { onDelete: "restrict" }),
+    numberRaw: text("number_raw").notNull(),
+    reason: text("reason").notNull().default(""),
+    issueDate: text("issue_date"),
+    subtotalAmount: real("subtotal_amount"),
+    taxAmount: real("tax_amount"),
+    totalAmount: real("total_amount"),
+    status: text("status").notNull().default("draft"),
+    createdBy: text("created_by").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [index("ecf_debit_notes_invoice_idx").on(table.invoiceId, table.createdAt)],
+);
+
+export const ecfDebitNoteLines = sqliteTable(
+  "ecf_debit_note_lines",
+  {
+    id: text("id").primaryKey(),
+    debitNoteId: text("debit_note_id").notNull().references(() => ecfDebitNotes.id, { onDelete: "cascade" }),
+    lineNumber: integer("line_number").notNull(),
+    itemCode: text("item_code").notNull().default(""),
+    description: text("description").notNull(),
+    quantity: real("quantity"),
+    unitOfMeasure: text("unit_of_measure").notNull().default(""),
+    unitPrice: real("unit_price"),
+    lineSubtotal: real("line_subtotal"),
+    taxAmount: real("tax_amount"),
+    lineTotal: real("line_total"),
+    taxConfigurationId: text("tax_configuration_id").references(() => taxConfigurations.id, { onDelete: "set null" }),
+  },
+  (table) => [uniqueIndex("ecf_debit_note_lines_number_unique").on(table.debitNoteId, table.lineNumber)],
+);
+
 export const paymentAllocations = sqliteTable(
   "payment_allocations",
   {
@@ -2167,3 +2461,364 @@ export const collectionActivities = sqliteTable(
     ),
   ],
 );
+
+export const whatsappConversations = sqliteTable("whatsapp_conversations", {
+  id: text("id").primaryKey(),
+  phoneNumberId: text("phone_number_id").notNull(),
+  waId: text("wa_id").notNull(),
+  displayName: text("display_name").notNull().default(""),
+  profileName: text("profile_name").notNull().default(""),
+  status: text("status", { enum: ["open", "pending", "closed"] }).notNull().default("open"),
+  assignedUserId: integer("assigned_user_id").references(() => staffUsers.id, { onDelete: "set null" }),
+  businessId: text("business_id").references(() => businesses.id, { onDelete: "set null" }),
+  contactId: text("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+  leadId: text("lead_id").references(() => leads.id, { onDelete: "set null" }),
+  opportunityId: text("opportunity_id").references(() => opportunities.id, { onDelete: "set null" }),
+  serviceWindowExpiresAt: text("service_window_expires_at"),
+  lastInboundAt: text("last_inbound_at"),
+  lastMessageAt: text("last_message_at"),
+  unreadCount: integer("unread_count").notNull().default(0),
+  matchState: text("match_state", { enum: ["matched", "created_prospect", "ambiguous", "unmatched"] }).notNull().default("unmatched"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("whatsapp_conversations_phone_wa_unique").on(table.phoneNumberId, table.waId),
+  index("whatsapp_conversations_status_idx").on(table.status, table.updatedAt),
+  index("whatsapp_conversations_assigned_idx").on(table.assignedUserId),
+]);
+
+export const whatsappMessages = sqliteTable("whatsapp_messages", {
+  id: text("id").primaryKey(),
+  conversationId: text("conversation_id").notNull().references(() => whatsappConversations.id, { onDelete: "cascade" }),
+  metaMessageId: text("meta_message_id"),
+  direction: text("direction", { enum: ["inbound", "outbound"] }).notNull(),
+  type: text("type", { enum: ["text", "image", "document", "audio", "video", "sticker", "location", "unsupported"] }).notNull(),
+  body: text("body").notNull().default(""),
+  caption: text("caption").notNull().default(""),
+  status: text("status", { enum: ["received", "sent", "delivered", "read", "failed", "uncertain"] }).notNull().default("received"),
+  errorCode: text("error_code"),
+  errorMessage: text("error_message"),
+  mediaId: text("media_id"),
+  mediaKey: text("media_key"),
+  contentType: text("content_type"),
+  fileName: text("file_name"),
+  size: integer("size"),
+  templateName: text("template_name"),
+  templateLanguage: text("template_language"),
+  replyToId: text("reply_to_id"),
+  sentBy: text("sent_by"),
+  campaignRecipientId: text("campaign_recipient_id"),
+  createdAt: text("created_at").notNull(),
+  sentAt: text("sent_at"),
+  deliveredAt: text("delivered_at"),
+  readAt: text("read_at"),
+  failedAt: text("failed_at"),
+}, (table) => [
+  uniqueIndex("whatsapp_messages_meta_unique").on(table.metaMessageId),
+  index("whatsapp_messages_conversation_idx").on(table.conversationId, table.createdAt),
+  index("whatsapp_messages_status_idx").on(table.status),
+]);
+
+export const whatsappConversationReads = sqliteTable("whatsapp_conversation_reads", {
+  conversationId: text("conversation_id").notNull().references(() => whatsappConversations.id, { onDelete: "cascade" }),
+  userId: integer("user_id").notNull().references(() => staffUsers.id, { onDelete: "cascade" }),
+  lastReadMessageId: text("last_read_message_id"),
+  lastReadAt: text("last_read_at").notNull(),
+}, (table) => [primaryKey({ columns: [table.conversationId, table.userId] })]);
+
+export const whatsappConversationEvents = sqliteTable("whatsapp_conversation_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  conversationId: text("conversation_id").notNull().references(() => whatsappConversations.id, { onDelete: "cascade" }),
+  actorEmail: text("actor_email").notNull(),
+  action: text("action").notNull(),
+  detail: text("detail").notNull().default(""),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("whatsapp_conversation_events_idx").on(table.conversationId, table.createdAt)]);
+
+export const whatsappTemplates = sqliteTable("whatsapp_templates", {
+  id: text("id").primaryKey(),
+  metaId: text("meta_id"),
+  name: text("name").notNull(),
+  language: text("language").notNull(),
+  category: text("category").notNull().default("UTILITY"),
+  status: text("status").notNull().default("PENDING"),
+  quality: text("quality"),
+  components: text("components").notNull().default("[]"),
+  syncedAt: text("synced_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [uniqueIndex("whatsapp_templates_name_language_unique").on(table.name, table.language), index("whatsapp_templates_status_idx").on(table.status)]);
+
+export const whatsappWebhookEvents = sqliteTable("whatsapp_webhook_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  eventHash: text("event_hash").notNull(),
+  eventType: text("event_type").notNull(),
+  metaMessageId: text("meta_message_id"),
+  processingStatus: text("processing_status", { enum: ["processed", "ignored", "failed"] }).notNull(),
+  error: text("error"),
+  receivedAt: text("received_at").notNull(),
+  processedAt: text("processed_at"),
+}, (table) => [uniqueIndex("whatsapp_webhook_events_hash_unique").on(table.eventHash), index("whatsapp_webhook_events_received_idx").on(table.receivedAt)]);
+
+export const whatsappCampaigns = sqliteTable("whatsapp_campaigns", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  templateId: text("template_id").notNull().references(() => whatsappTemplates.id),
+  templateName: text("template_name").notNull(),
+  templateLanguage: text("template_language").notNull(),
+  audienceFilter: text("audience_filter").notNull().default("{}"),
+  status: text("status", { enum: ["draft", "queued", "running", "paused", "completed", "failed"] }).notNull().default("draft"),
+  total: integer("total").notNull().default(0),
+  processed: integer("processed").notNull().default(0),
+  sent: integer("sent").notNull().default(0),
+  failed: integer("failed").notNull().default(0),
+  createdBy: text("created_by").notNull(),
+  startedAt: text("started_at"),
+  finishedAt: text("finished_at"),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const whatsappCampaignRecipients = sqliteTable("whatsapp_campaign_recipients", {
+  id: text("id").primaryKey(),
+  campaignId: text("campaign_id").notNull().references(() => whatsappCampaigns.id, { onDelete: "cascade" }),
+  contactId: text("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+  leadId: text("lead_id").references(() => leads.id, { onDelete: "set null" }),
+  phone: text("phone").notNull(),
+  displayName: text("display_name").notNull().default(""),
+  status: text("status", { enum: ["queued", "sending", "sent", "delivered", "read", "failed", "uncertain", "skipped"] }).notNull().default("queued"),
+  metaMessageId: text("meta_message_id"),
+  error: text("error"),
+  attempts: integer("attempts").notNull().default(0),
+  lockedAt: text("locked_at"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [uniqueIndex("whatsapp_campaign_recipients_phone_unique").on(table.campaignId, table.phone), index("whatsapp_campaign_recipients_queue_idx").on(table.campaignId, table.status)]);
+
+export const aiProviderConfigs = sqliteTable("ai_provider_configs", {
+  id: text("id").primaryKey(),
+  provider: text("provider", { enum: ["openai", "deepseek", "google"] }).notNull(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+  transport: text("transport", { enum: ["direct", "gateway"] }).notNull().default("direct"),
+  defaultModel: text("default_model").notNull().default(""),
+  capabilities: text("capabilities").notNull().default("[]"),
+  limits: text("limits").notNull().default("{}"),
+  healthStatus: text("health_status", { enum: ["unknown", "healthy", "degraded", "unavailable"] }).notNull().default("unknown"),
+  lastHealthAt: text("last_health_at"),
+  updatedBy: text("updated_by").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [uniqueIndex("ai_provider_configs_provider_unique").on(table.provider), index("ai_provider_configs_enabled_idx").on(table.enabled)]);
+
+export const aiSettings = sqliteTable("ai_settings", {
+  id: text("id").primaryKey(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+  defaultProvider: text("default_provider", { enum: ["openai", "deepseek", "google"] }).notNull().default("openai"),
+  fallbackEnabled: integer("fallback_enabled", { mode: "boolean" }).notNull().default(false),
+  gatewayEnabled: integer("gateway_enabled", { mode: "boolean" }).notNull().default(false),
+  toolAccess: text("tool_access", { enum: ["read_only"] }).notNull().default("read_only"),
+  destructiveActions: integer("destructive_actions", { mode: "boolean" }).notNull().default(false),
+  updatedBy: text("updated_by").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const aiThreads = sqliteTable("ai_threads", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull().default(""),
+  ownerEmail: text("owner_email").notNull(),
+  entityType: text("entity_type"),
+  entityId: text("entity_id"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+  archivedAt: text("archived_at"),
+}, (table) => [index("ai_threads_owner_idx").on(table.ownerEmail, table.updatedAt), index("ai_threads_entity_idx").on(table.entityType, table.entityId)]);
+
+export const aiMessages = sqliteTable("ai_messages", {
+  id: text("id").primaryKey(),
+  threadId: text("thread_id").notNull().references(() => aiThreads.id, { onDelete: "cascade" }),
+  role: text("role", { enum: ["system", "user", "assistant", "tool"] }).notNull(),
+  content: text("content").notNull().default(""),
+  structured: text("structured").notNull().default("{}"),
+  provider: text("provider"),
+  model: text("model"),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("ai_messages_thread_idx").on(table.threadId, table.createdAt)]);
+
+export const aiRuns = sqliteTable("ai_runs", {
+  id: text("id").primaryKey(),
+  threadId: text("thread_id").references(() => aiThreads.id, { onDelete: "set null" }),
+  actorEmail: text("actor_email").notNull(),
+  operation: text("operation").notNull(),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  transport: text("transport").notNull(),
+  status: text("status", { enum: ["queued", "running", "succeeded", "failed", "blocked"] }).notNull().default("queued"),
+  requestMetadata: text("request_metadata").notNull().default("{}"),
+  responseMetadata: text("response_metadata").notNull().default("{}"),
+  errorClass: text("error_class"),
+  latencyMs: integer("latency_ms"),
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  createdAt: text("created_at").notNull(),
+  completedAt: text("completed_at"),
+}, (table) => [index("ai_runs_actor_idx").on(table.actorEmail, table.createdAt), index("ai_runs_status_idx").on(table.status, table.createdAt), index("ai_runs_provider_idx").on(table.provider, table.createdAt)]);
+
+export const aiToolCalls = sqliteTable("ai_tool_calls", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => aiRuns.id, { onDelete: "cascade" }),
+  toolName: text("tool_name").notNull(),
+  argumentsJson: text("arguments_json").notNull().default("{}"),
+  resultJson: text("result_json").notNull().default("{}"),
+  authorization: text("authorization", { enum: ["allowed", "denied", "approval_required"] }).notNull().default("approval_required"),
+  idempotencyKey: text("idempotency_key").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [uniqueIndex("ai_tool_calls_idempotency_unique").on(table.idempotencyKey), index("ai_tool_calls_run_idx").on(table.runId, table.createdAt)]);
+
+export const aiApprovals = sqliteTable("ai_approvals", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => aiRuns.id, { onDelete: "cascade" }),
+  actionType: text("action_type").notNull(),
+  proposedAction: text("proposed_action").notNull().default("{}"),
+  status: text("status", { enum: ["pending", "approved", "rejected", "expired", "executed"] }).notNull().default("pending"),
+  requestedBy: text("requested_by").notNull(),
+  decidedBy: text("decided_by"),
+  decisionNote: text("decision_note").notNull().default(""),
+  idempotencyKey: text("idempotency_key").notNull().default(""),
+  executionResult: text("execution_result").notNull().default("{}"),
+  expiresAt: text("expires_at"),
+  createdAt: text("created_at").notNull(),
+  decidedAt: text("decided_at"),
+}, (table) => [
+  index("ai_approvals_status_idx").on(table.status, table.createdAt),
+  index("ai_approvals_requester_idx").on(table.requestedBy),
+  uniqueIndex("ai_approvals_idempotency_unique")
+    .on(table.idempotencyKey)
+    .where(sql`${table.idempotencyKey} <> ''`),
+]);
+
+export const aiDailyBriefs = sqliteTable("ai_daily_briefs", {
+  id: text("id").primaryKey(),
+  ownerEmail: text("owner_email").notNull(),
+  briefDate: text("brief_date").notNull(),
+  summary: text("summary").notNull().default(""),
+  factsJson: text("facts_json").notNull().default("{}"),
+  provider: text("provider").notNull().default("deterministic"),
+  model: text("model").notNull().default("rules-v1"),
+  aiRunId: text("ai_run_id").references(() => aiRuns.id, { onDelete: "set null" }),
+  status: text("status", { enum: ["active", "archived"] }).notNull().default("active"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("ai_daily_briefs_owner_date_unique").on(table.ownerEmail, table.briefDate),
+  index("ai_daily_briefs_owner_idx").on(table.ownerEmail, table.updatedAt),
+]);
+
+export const aiDailyBriefItems = sqliteTable("ai_daily_brief_items", {
+  id: text("id").primaryKey(),
+  briefId: text("brief_id").notNull().references(() => aiDailyBriefs.id, { onDelete: "cascade" }),
+  itemKey: text("item_key").notNull(),
+  section: text("section", { enum: ["today", "risks", "followups", "collections", "projects"] }).notNull(),
+  entityType: text("entity_type").notNull(),
+  entityId: text("entity_id").notNull(),
+  title: text("title").notNull(),
+  reason: text("reason").notNull().default(""),
+  priorityScore: integer("priority_score").notNull().default(0),
+  suggestedAction: text("suggested_action").notNull().default("{}"),
+  status: text("status", { enum: ["active", "dismissed", "completed"] }).notNull().default("active"),
+  dismissedBy: text("dismissed_by"),
+  dismissedAt: text("dismissed_at"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("ai_daily_brief_items_key_unique").on(table.briefId, table.itemKey),
+  index("ai_daily_brief_items_brief_idx").on(table.briefId, table.status, table.priorityScore),
+  index("ai_daily_brief_items_entity_idx").on(table.entityType, table.entityId),
+]);
+
+export const aiUsageEvents = sqliteTable("ai_usage_events", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").references(() => aiRuns.id, { onDelete: "set null" }),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  estimatedCost: real("estimated_cost"),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("ai_usage_events_provider_idx").on(table.provider, table.createdAt), index("ai_usage_events_run_idx").on(table.runId)]);
+
+export const voiceRecordings = sqliteTable("voice_recordings", {
+  id: text("id").primaryKey(),
+  source: text("source", { enum: ["browser", "whatsapp", "document", "import"] }).notNull(),
+  entityType: text("entity_type"),
+  entityId: text("entity_id"),
+  objectKey: text("object_key").notNull(),
+  contentType: text("content_type").notNull(),
+  size: integer("size").notNull(),
+  durationSeconds: real("duration_seconds"),
+  language: text("language").notNull().default("es"),
+  sha256: text("sha256").notNull().default(""),
+  status: text("status", { enum: ["uploaded", "queued", "processing", "ready", "failed", "expired"] }).notNull().default("uploaded"),
+  retentionUntil: text("retention_until"),
+  createdBy: text("created_by").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [index("voice_recordings_entity_idx").on(table.entityType, table.entityId), index("voice_recordings_status_idx").on(table.status, table.createdAt), index("voice_recordings_retention_idx").on(table.retentionUntil)]);
+
+export const voiceTranscriptions = sqliteTable("voice_transcriptions", {
+  id: text("id").primaryKey(),
+  recordingId: text("recording_id").notNull().references(() => voiceRecordings.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  originalText: text("original_text").notNull().default(""),
+  cleanedText: text("cleaned_text").notNull().default(""),
+  structuredPayload: text("structured_payload").notNull().default("{}"),
+  confidence: text("confidence").notNull().default("{}"),
+  status: text("status", { enum: ["pending", "ready", "failed"] }).notNull().default("pending"),
+  error: text("error"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [uniqueIndex("voice_transcriptions_recording_unique").on(table.recordingId), index("voice_transcriptions_status_idx").on(table.status, table.createdAt)]);
+
+export const recordNotes = sqliteTable("record_notes", {
+  id: text("id").primaryKey(),
+  entityType: text("entity_type").notNull(),
+  entityId: text("entity_id").notNull(),
+  originalText: text("original_text").notNull().default(""),
+  cleanedText: text("cleaned_text").notNull(),
+  source: text("source", { enum: ["manual", "voice", "whatsapp", "ai"] }).notNull().default("manual"),
+  voiceRecordingId: text("voice_recording_id").references(() => voiceRecordings.id, { onDelete: "set null" }),
+  status: text("status", { enum: ["draft", "approved", "archived"] }).notNull().default("approved"),
+  createdBy: text("created_by").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [index("record_notes_entity_idx").on(table.entityType, table.entityId, table.createdAt), index("record_notes_voice_idx").on(table.voiceRecordingId)]);
+
+export const dailyReports = sqliteTable("daily_reports", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  reportDate: text("report_date").notNull(),
+  status: text("status", { enum: ["draft", "submitted", "approved", "rejected"] }).notNull().default("draft"),
+  summary: text("summary").notNull().default(""),
+  workCompleted: text("work_completed").notNull().default(""),
+  workers: text("workers").notNull().default("[]"),
+  materialsUsed: text("materials_used").notNull().default("[]"),
+  materialsMissing: text("materials_missing").notNull().default("[]"),
+  blockers: text("blockers").notNull().default("[]"),
+  incidents: text("incidents").notNull().default("[]"),
+  clientComments: text("client_comments").notNull().default(""),
+  nextPlan: text("next_plan").notNull().default(""),
+  originalTranscript: text("original_transcript").notNull().default(""),
+  voiceRecordingId: text("voice_recording_id").references(() => voiceRecordings.id, { onDelete: "set null" }),
+  createdBy: text("created_by").notNull(),
+  approvedBy: text("approved_by"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+  approvedAt: text("approved_at"),
+}, (table) => [uniqueIndex("daily_reports_project_date_unique").on(table.projectId, table.reportDate), index("daily_reports_project_status_idx").on(table.projectId, table.status, table.reportDate), index("daily_reports_voice_idx").on(table.voiceRecordingId)]);
+
+export const dailyReportDocuments = sqliteTable("daily_report_documents", {
+  id: text("id").primaryKey(),
+  reportId: text("report_id").notNull().references(() => dailyReports.id, { onDelete: "cascade" }),
+  documentId: text("document_id").notNull().references(() => documents.id, { onDelete: "cascade" }),
+  caption: text("caption").notNull().default(""),
+  createdAt: text("created_at").notNull(),
+}, (table) => [uniqueIndex("daily_report_documents_unique").on(table.reportId, table.documentId), index("daily_report_documents_report_idx").on(table.reportId)]);

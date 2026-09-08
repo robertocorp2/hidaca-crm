@@ -275,7 +275,7 @@ function issueDrafts(
 }
 
 export async function GET() {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "importaciones", action: "view" });
   if (!auth.ok) return auth.response;
   const rows = await getDb()
     .select()
@@ -295,11 +295,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "importaciones", action: "create" });
   if (!auth.ok) return auth.response;
-  if (auth.user.role === "viewer") {
-    return Response.json({ error: "Acceso de solo lectura." }, { status: 403 });
-  }
 
   const form = await request.formData();
   const file = form.get("file");

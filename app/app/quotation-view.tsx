@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { BusinessRow, ContactRow } from "./types";
 import type { QuotationDetail, QuotationSummary } from "./source-types";
-import { Empty, dateTime, money } from "./ui";
+import { Empty, dateTime, formatBusinessDate, money } from "./ui";
 
 type ProjectOption = {
   id: string;
@@ -389,7 +389,9 @@ export function QuotationsView({
             }
           />
         </section>
-        {detail.sourceRecord && <SourceRecordCard record={detail.sourceRecord} />}
+        {detail.sourceRecord && (
+          <SourceRecordCard record={detail.sourceRecord} />
+        )}
         <ListTable detail={detail} currency={quote.currency} />
         <section className="detail-grid">
           <ListCard
@@ -1017,7 +1019,10 @@ function SourceRecordCard({
         <Field label="Fecha" value={value(record.sourceDate)} />
         <Field label="Mes" value={value(record.sourceMonth)} />
         <Field label="Año" value={value(record.sourceYear)} />
-        <Field label="Cotización NO" value={value(record.sourceQuotationNumber)} />
+        <Field
+          label="Cotización NO"
+          value={value(record.sourceQuotationNumber)}
+        />
         <Field label="Cliente" value={value(record.sourceCustomerName)} />
         <Field label="RNC" value={value(record.sourceRnc)} />
         <Field label="Contacto" value={value(record.sourceContact)} />
@@ -1025,7 +1030,10 @@ function SourceRecordCard({
         <Field label="Celular" value={value(record.sourceMobilePhone)} />
         <Field label="Correo" value={value(record.sourceEmail)} />
         <Field label="Dirección" value={value(record.sourceAddress)} />
-        <Field label="Dirección de Proyecto" value={value(record.sourceProjectAddress)} />
+        <Field
+          label="Dirección de Proyecto"
+          value={value(record.sourceProjectAddress)}
+        />
         <Field label="Archivo de Origen" value={value(record.sourceFilename)} />
       </dl>
       {record.sourceDocumentUri ? (
@@ -1186,15 +1194,15 @@ function formatDate(value: unknown) {
   );
   return Number.isNaN(date.getTime())
     ? String(value)
-    : new Intl.DateTimeFormat("es-DO", { dateStyle: "medium" }).format(date);
+    : formatBusinessDate(date, { dateStyle: "medium" });
 }
 
 function monthName(value: unknown) {
   const month = Number(value);
   if (!Number.isInteger(month) || month < 1 || month > 12) return "—";
-  return new Intl.DateTimeFormat("es-DO", { month: "long" }).format(
-    new Date(2020, month - 1, 1),
-  );
+  return formatBusinessDate(new Date(Date.UTC(2020, month - 1, 1, 12)), {
+    month: "long",
+  });
 }
 
 function measurement(item: Record<string, unknown>) {

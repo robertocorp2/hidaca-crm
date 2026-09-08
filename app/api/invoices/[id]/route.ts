@@ -13,6 +13,8 @@ import {
   optionalAmount,
 } from "../../../lib/invoice-domain";
 import { deleteSearchDocument } from "../../../lib/search";
+import { calculateInvoice } from "../../../lib/invoice-calculations";
+import { calculateDocument, calculateDocumentLine } from "../../../lib/document-calculations";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -27,8 +29,18 @@ export async function GET(_: Request, context: RouteContext) {
   if (!auth.ok) return auth.response;
   const { id } = await context.params;
   const [invoice] = await rows<Record<string, unknown>>(
-    `SELECT i.*, b.name AS business_name, c.name AS contact_name,
-       p.name AS project_name, q.quotation_number AS quotation_number,
+    `SELECT i.*, b.name AS business_name, b.rnc AS business_rnc,
+       b.address AS business_address, b.phone AS business_phone,
+       b.mobile_phone AS business_mobile_phone, b.email AS business_email,
+       c.name AS contact_name, c.phone AS contact_phone,
+       c.mobile_phone AS contact_mobile_phone, c.email AS contact_email,
+       p.name AS project_name, p.description AS project_description,
+       q.quotation_number AS quotation_number,
+       (SELECT trim(a.line1 || CASE WHEN a.line2 <> '' THEN ', ' || a.line2 ELSE '' END)
+        FROM addresses a
+        WHERE a.project_id = p.id
+        ORDER BY a.is_primary DESC, a.created_at ASC LIMIT 1) AS project_address,
+       d.id AS source_document_id,
        d.name AS source_document_name
      FROM invoices i
      JOIN businesses b ON b.id = i.business_id
@@ -130,12 +142,44 @@ export async function PATCH(request: Request, context: RouteContext) {
     : current.ncfRaw;
   if (!invoiceNumberRaw) {
     return Response.json(
-      { error: "El número de factura es obligatorio." },
+      { error: "El número de factura es obligatorio.", field: "invoiceNumberRaw" },
       { status: 400 },
     );
   }
 
   const now = new Date().toISOString();
+  const replacementLines = Array.isArray(payload.lines)
+    ? normalizeLines(payload.lines, id)
+    : null;
+  const currentSourceValues = parseObject(current.sourceValues);
+  const manualSource = parseObject(currentSourceValues.manual);
+  if (replacementLines) {
+    const lineCalculation = calculateDocument({
+      lines: payload.lines as Record<string, unknown>[],
+      discount: payload.discountAmount ?? current.discountAmount,
+      additionalCharge:
+        payload.additionalChargeAmount ?? manualSource.additionalChargeAmount,
+      taxRate: payload.taxRate ?? manualSource.taxRate,
+      advance: payload.paidAmountSnapshot ?? current.paidAmountSnapshot,
+    });
+    if (lineCalculation.errors.length) {
+      return Response.json({ error: lineCalculation.errors[0], field: "lines" }, { status: 400 });
+    }
+  }
+  const calculated = calculateInvoice({
+    lines: replacementLines ?? undefined,
+    subtotal: payload.subtotalAmount ?? current.subtotalAmount,
+    discount: payload.discountAmount ?? current.discountAmount,
+    additionalCharge:
+      payload.additionalChargeAmount ?? manualSource.additionalChargeAmount,
+    taxRate: payload.taxRate ?? manualSource.taxRate,
+    taxAmount: Object.hasOwn(payload, "taxAmount") ? payload.taxAmount : current.taxAmount,
+    advance: payload.paidAmountSnapshot ?? current.paidAmountSnapshot,
+  });
+  const recalculate = replacementLines !== null || [
+    "subtotalAmount", "discountAmount", "additionalChargeAmount", "taxRate",
+    "taxAmount", "paidAmountSnapshot",
+  ].some((key) => Object.hasOwn(payload, key));
   try {
     const [invoice] = await db
       .update(invoices)
@@ -156,6 +200,15 @@ export async function PATCH(request: Request, context: RouteContext) {
           : current.dueDateRaw,
         ncfRaw,
         ncfNormalized: normalizeInvoiceIdentifier(ncfRaw),
+        contactId: Object.hasOwn(payload, "contactId")
+          ? cleanText(payload.contactId, 80) || null
+          : current.contactId,
+        projectId: Object.hasOwn(payload, "projectId")
+          ? cleanText(payload.projectId, 80) || null
+          : current.projectId,
+        quotationId: Object.hasOwn(payload, "quotationId")
+          ? cleanText(payload.quotationId, 80) || null
+          : current.quotationId,
         status: Object.hasOwn(payload, "status")
           ? enumValue(payload.status, invoiceStatuses, current.status)
           : current.status,
@@ -165,15 +218,33 @@ export async function PATCH(request: Request, context: RouteContext) {
         purchaseOrderNumber: Object.hasOwn(payload, "purchaseOrderNumber")
           ? cleanText(payload.purchaseOrderNumber, 120)
           : current.purchaseOrderNumber,
-        subtotalAmount: Object.hasOwn(payload, "subtotalAmount")
-          ? optionalAmount(payload.subtotalAmount)
-          : current.subtotalAmount,
-        taxAmount: Object.hasOwn(payload, "taxAmount")
-          ? optionalAmount(payload.taxAmount)
-          : current.taxAmount,
-        totalAmount: Object.hasOwn(payload, "totalAmount")
-          ? optionalAmount(payload.totalAmount)
-          : current.totalAmount,
+        salesRepresentative: Object.hasOwn(payload, "salesRepresentative")
+          ? cleanText(payload.salesRepresentative, 180)
+          : current.salesRepresentative,
+        subtotalAmount: recalculate ? calculated.subtotal : current.subtotalAmount,
+        discountAmount: recalculate ? calculated.discount : current.discountAmount,
+        taxableAmount: recalculate ? calculated.taxableAmount : current.taxableAmount,
+        taxAmount: recalculate ? calculated.taxAmount : current.taxAmount,
+        totalAmount: recalculate ? calculated.total : current.totalAmount,
+        paidAmountSnapshot: recalculate ? calculated.advance : current.paidAmountSnapshot,
+        balanceAmountSnapshot: recalculate ? calculated.balance : current.balanceAmountSnapshot,
+        snapshotAsOf: recalculate ? now.slice(0, 10) : current.snapshotAsOf,
+        sourceValues: JSON.stringify({
+          ...currentSourceValues,
+          manual: {
+            ...manualSource,
+            taxRate: recalculate ? calculated.taxRate : manualSource.taxRate,
+            additionalChargeLabel: Object.hasOwn(payload, "additionalChargeLabel")
+              ? cleanText(payload.additionalChargeLabel, 120)
+              : manualSource.additionalChargeLabel,
+            additionalChargeAmount: recalculate
+              ? calculated.additionalCharge
+              : manualSource.additionalChargeAmount,
+            notes: Object.hasOwn(payload, "notes")
+              ? cleanText(payload.notes, 4_000)
+              : manualSource.notes,
+          },
+        }),
         cancellationReason: Object.hasOwn(payload, "cancellationReason")
           ? cleanText(payload.cancellationReason, 1000)
           : current.cancellationReason,
@@ -182,6 +253,30 @@ export async function PATCH(request: Request, context: RouteContext) {
       })
       .where(and(eq(invoices.id, id), isNull(invoices.archivedAt)))
       .returning();
+    if (replacementLines !== null) {
+      const d1 = getD1();
+      await d1.batch([
+        d1.prepare("DELETE FROM invoice_lines WHERE invoice_id = ?").bind(id),
+        ...replacementLines.map((line) =>
+          d1
+            .prepare(
+              `INSERT INTO invoice_lines (
+                 id, invoice_id, line_number, item_code, description, location,
+                 quantity, width_cm, height_cm, area_sqm, unit_of_measure,
+                 unit_price, line_subtotal, discount_amount, tax_amount,
+                 line_total, source_values, value_states
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .bind(
+              line.id, line.invoiceId, line.lineNumber, line.itemCode,
+              line.description, line.location, line.quantity, line.widthCm,
+              line.heightCm, line.areaSqm, line.unitOfMeasure, line.unitPrice,
+              line.lineSubtotal, line.discountAmount, line.taxAmount,
+              line.lineTotal, line.sourceValues, line.valueStates,
+            ),
+        ),
+      ]);
+    }
     await writeAudit(
       auth.user.email,
       "update",
@@ -192,9 +287,54 @@ export async function PATCH(request: Request, context: RouteContext) {
     return Response.json({ invoice });
   } catch {
     return Response.json(
-      { error: "La identidad fiscal o el NCF entra en conflicto." },
+      { error: "La identidad fiscal o el NCF entra en conflicto.", field: "ncfRaw" },
       { status: 409 },
     );
+  }
+}
+
+function normalizeLines(value: unknown[], invoiceId: string) {
+  return value.flatMap((entry, index) => {
+    if (!entry || typeof entry !== "object") return [];
+    const line = entry as Record<string, unknown>;
+    const description = cleanText(line.description, 1000);
+    if (!description) return [];
+    const calculatedLine = calculateDocumentLine(line);
+    return [{
+      id: crypto.randomUUID(),
+      invoiceId,
+      lineNumber: index + 1,
+      itemCode: cleanText(line.itemCode, 120),
+      description,
+      location: cleanText(line.location, 300),
+      quantity: calculatedLine.quantity,
+      widthCm: optionalAmount(line.widthCm),
+      heightCm: optionalAmount(line.heightCm),
+      areaSqm: calculatedLine.areaTotal,
+      unitOfMeasure: cleanText(line.unitOfMeasure, 40),
+      unitPrice: optionalAmount(line.unitPrice),
+      lineSubtotal: calculatedLine.lineTotal,
+      discountAmount: optionalAmount(line.discountAmount),
+      taxAmount: optionalAmount(line.taxAmount),
+      lineTotal: calculatedLine.lineTotal,
+      sourceValues: "{}",
+      valueStates: "{}",
+    }];
+  });
+}
+
+function parseObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string" || !value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
   }
 }
 

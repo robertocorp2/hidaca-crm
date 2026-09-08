@@ -10,7 +10,7 @@ test("register dry run is staged, hash-idempotent, and separate from canonical w
     read("../app/api/imports/[id]/accept-register/route.ts"),
   ]);
   assert.match(dryRun, /authorizeApi/);
-  assert.match(dryRun, /role === "viewer"/);
+  assert.match(dryRun, /module: "importaciones", action: "create"/);
   assert.match(dryRun, /eq\(importFiles\.sha256, hash\)/);
   assert.match(dryRun, /existing\?\.templateType === "register"/);
   assert.match(dryRun, /templateType: "register"/);
@@ -91,7 +91,7 @@ test("project and contact screens expose normalized relationships and source rec
   }
   assert.match(projectRoute, /project_contacts/);
   assert.match(projectRoute, /project_locations/);
-  assert.match(contacts, /ContactRelatedSections/);
+  assert.match(contacts, /RecordWorkspace/);
   assert.match(contactRoute, /project_contacts/);
   assert.match(contactRoute, /source_references/);
 });

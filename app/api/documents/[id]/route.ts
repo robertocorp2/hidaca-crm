@@ -26,8 +26,8 @@ function safeFileName(value: string) {
   return value.replace(/[^\p{L}\p{N}._ -]/gu, "_").slice(0, 180);
 }
 
-export async function GET(_: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+export async function GET(request: Request, context: RouteContext) {
+  const auth = await authorizeApi({ module: "documentos", action: "view" });
   if (!auth.ok) return auth.response;
   const { id } = await context.params;
   const [document] = await getDb()
@@ -45,10 +45,13 @@ export async function GET(_: Request, context: RouteContext) {
       { status: 404 },
     );
   }
+  const requestedDisposition = new URL(request.url).searchParams.get("disposition");
+  const previewable = document.contentType === "application/pdf" || document.contentType.startsWith("image/");
+  const disposition = requestedDisposition === "inline" && previewable ? "inline" : "attachment";
   return new Response(object.body, {
     headers: {
       "content-type": document.contentType,
-      "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(safeFileName(document.name))}`,
+      "content-disposition": `${disposition}; filename*=UTF-8''${encodeURIComponent(safeFileName(document.name))}`,
       "cache-control": "private, no-store",
       "x-content-type-options": "nosniff",
     },
@@ -56,11 +59,8 @@ export async function GET(_: Request, context: RouteContext) {
 }
 
 export async function DELETE(_: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "documentos", action: "delete" });
   if (!auth.ok) return auth.response;
-  if (auth.user.role === "viewer") {
-    return Response.json({ error: "Acceso de solo lectura." }, { status: 403 });
-  }
 
   const { id } = await context.params;
   const [document] = await getDb()

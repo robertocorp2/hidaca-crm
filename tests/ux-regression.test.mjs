@@ -72,9 +72,9 @@ test("responsive data views, accessible Calendar controls, and mobile day view a
   ]);
 
   assert.match(css, /\.responsive-table td::before/);
-  assert.match(entities, /className="responsive-table"/);
-  assert.match(leads, /className="responsive-table"/);
-  assert.match(opportunities, /className="responsive-table"/);
+  assert.match(entities, /className="[^"]*responsive-table[^"]*"/);
+  assert.match(leads, /className="[^"]*responsive-table[^"]*"/);
+  assert.match(opportunities, /className="[^"]*responsive-table[^"]*"/);
   assert.match(agenda, /aria-pressed=\{calendarMode === "month"\}/);
   assert.match(agenda, /aria-label="Vista del calendario"/);
   assert.match(agenda, /calendar-\$\{calendarMode\}-mode/);

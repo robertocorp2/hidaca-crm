@@ -7,7 +7,7 @@ import { searchDocumentStatement } from "../../../../lib/search";
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function POST(request: Request, context: RouteContext) {
-  const auth = await authorizeApi(true);
+  const auth = await authorizeApi({ module: "oportunidades", action: "administer" });
   if (!auth.ok) return auth.response;
   const { id } = await context.params;
   const payload = (await request.json()) as { note?: unknown };

@@ -11,6 +11,7 @@ import type {
 import { Empty, dateTime } from "./ui";
 import { RegisterImportReview } from "./register-import-review";
 import { InvoiceImportReview } from "./invoice-import-review";
+import { InvoiceReplacementPanel } from "./invoice-replacement-panel";
 
 export function ImportsView({
   canWrite,
@@ -677,6 +678,14 @@ export function ImportsView({
           </p>
         </div>
       </div>
+      {isAdmin && (
+        <InvoiceReplacementPanel
+          onCompleted={() => {
+            void loadList();
+            setMessage("Facturas 2021 reemplazadas y reconciliadas.");
+          }}
+        />
+      )}
       {canWrite && (
         <form className="panel import-upload" onSubmit={invoiceDryRun}>
           <div>

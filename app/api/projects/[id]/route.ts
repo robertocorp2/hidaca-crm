@@ -81,7 +81,7 @@ async function projectDetail(id: string) {
 }
 
 export async function GET(_: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "proyectos", action: "view" });
   if (!auth.ok) return auth.response;
   const { id } = await context.params;
   const detail = await projectDetail(id);
@@ -94,11 +94,8 @@ export async function GET(_: Request, context: RouteContext) {
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "proyectos", action: "edit" });
   if (!auth.ok) return auth.response;
-  if (auth.user.role === "viewer") {
-    return Response.json({ error: "Acceso de solo lectura." }, { status: 403 });
-  }
   const { id } = await context.params;
   const current = await projectDetail(id);
   if (!current) {
@@ -246,11 +243,8 @@ export async function PATCH(request: Request, context: RouteContext) {
 }
 
 export async function DELETE(_: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "proyectos", action: "delete" });
   if (!auth.ok) return auth.response;
-  if (auth.user.role === "viewer") {
-    return Response.json({ error: "Acceso de solo lectura." }, { status: 403 });
-  }
   const { id } = await context.params;
   const linked = await getD1()
     .prepare(

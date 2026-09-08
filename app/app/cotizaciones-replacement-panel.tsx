@@ -64,15 +64,15 @@ export function CotizacionesReplacementPanel() {
     && !dryRun.rowsBlocked,
   );
   return (
-    <section className="panel" aria-label="Reemplazar Cotizaciones desde Excel">
-      <h2>Reemplazar Cotizaciones desde Excel</h2>
-      <p>Solo administración. Primero valida el libro; el reemplazo elimina exclusivamente todas las Cotizaciones actuales, incluidas las archivadas.</p>
-      <input accept=".xlsx" aria-label="Libro de Cotizaciones" onChange={onFileChange} type="file" />
-      <div className="form-actions">
+    <section className="panel replacement-panel quotations-replacement-panel" aria-label="Reemplazar Cotizaciones desde Excel">
+      <div className="replacement-heading"><div><p className="eyebrow">Importación administrativa</p><h2>Reemplazar cotizaciones desde Excel</h2></div><span className="admin-badge">Solo administración</span></div>
+      <p className="replacement-copy">Primero valida el libro; el reemplazo elimina exclusivamente todas las cotizaciones actuales, incluidas las archivadas.</p>
+      <label className="file-picker"><span className="file-picker-mark" aria-hidden="true">XLSX</span><span className="file-picker-copy"><strong>{file ? file.name : "Selecciona el libro de cotizaciones"}</strong><small>{file ? "Libro listo para validar" : "Formato .xlsx"}</small></span><span className="file-picker-button">Elegir archivo</span><input accept=".xlsx" aria-label="Libro de Cotizaciones" onChange={onFileChange} type="file" /></label>
+      <div className="form-actions replacement-actions">
         <button className="secondary-button" disabled={!file || busy} onClick={() => void submit("dry-run")} type="button">{busy ? "Procesando…" : "Validar libro"}</button>
         <button className="danger-button" disabled={!clean || busy} onClick={() => void submit("replace")} type="button">Reemplazar {dryRun?.targetCount ?? 0} por 133</button>
       </div>
-      {dryRun && <p>{dryRun.sourceRows} filas fuente · {dryRun.rowsToInsert} por insertar · {dryRun.duplicateQuotationNumbers.length} grupos con número repetido.</p>}
+      {dryRun && <p className="replacement-summary">{dryRun.sourceRows} filas fuente <i aria-hidden="true">·</i> {dryRun.rowsToInsert} por insertar <i aria-hidden="true">·</i> {dryRun.duplicateQuotationNumbers.length} grupos con número repetido.</p>}
       {message && <p className="inline-alert" role="status">{message}</p>}
     </section>
   );

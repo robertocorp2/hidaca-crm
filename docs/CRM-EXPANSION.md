@@ -36,6 +36,20 @@ Pipeline animation is decorative. Stage names, `aria-current`, status text,
 and controls carry the meaning, and animation is disabled when the operating
 system requests reduced motion.
 
+Empresa and Contacto now share the same compact record workspace. Their
+activity action carries the current record into the existing Agenda form when
+the user has `agenda.create`; read-only users retain navigation to Agenda when
+they only have `agenda.view`. The timeline combines stored activities,
+`entity_history`, lifecycle timestamps and related-record timestamps, newest
+first, without manufacturing audit rows.
+
+Collection lists expose autocomplete search, sortable headers, URL-backed
+column filters and page sizes of 10, 25, 50, 100 or Todos. Filter changes reset
+the page and render removable chips. The filter predicate is applied to data
+already loaded by the view; it does not introduce cosmetic database queries.
+The profile menu's appearance preferences use an allowlisted local font stack,
+default to Inter and persist only in the current browser.
+
 ## Entity relationships
 
 ```mermaid
@@ -148,6 +162,10 @@ entity identifiers and deep links.
 | Archive records | No | Yes | Yes |
 | Reopen terminal Lead/Opportunity | No | No | Yes |
 | Manage staff allowlist | No | No | Yes |
+| HIDACA Copilot read/search | Yes | Yes | Yes |
+| Create AI drafts | No | Yes | Yes |
+| Approve AI actions | No (default) | No (explicit grant) | Yes |
+| Configure providers and limits | No | No | Yes |
 
 APIs enforce these rules server-side. UI visibility is convenience only.
 Queries use prepared statements. Search is bounded and excludes system data.
@@ -195,3 +213,22 @@ new CRM screens. R2 is not modified by this migration.
 - Legacy records, routes, module keys, documents, and hosting workflow remain.
 - Lint, TypeScript, automated tests, build, desktop/mobile browser checks, and
   production smoke tests pass.
+
+## AI operations foundation
+
+Migrations `0018_flaky_squadron_sinister.sql` and `0019_friendly_albert_cleary.sql` add an additive, provider-neutral
+AI foundation without changing legacy record routes. It creates provider
+configuration metadata, AI threads/runs/tool calls/approvals, usage events,
+private voice recording/transcription records, reusable record notes, and
+structured project daily reports with document links.
+
+The server-side provider router supports OpenAI, DeepSeek, and Google Gemini.
+General text can use Cloudflare AI Gateway when configured; transcription uses
+OpenAI directly first and Gemini audio as an optional fallback. Provider keys
+are runtime secrets only and are never persisted in D1 or returned to clients.
+
+The admin-only `/api/ai/settings` endpoint and `Inteligencia Artificial` settings view expose provider health, model allowlists, fallback/gateway policy, and usage metadata without secrets. The `/api/ai/providers`, `/api/ai/chat`, `/api/ai/voice`, and `/api/ai/drafts`
+endpoints require the existing ChatGPT identity and `ai` permission module.
+AI is disabled unless `AI_ENABLED=true`; voice additionally requires
+`VOICE_AI_ENABLED=true`. Drafts are reviewable outputs and do not create
+records or send WhatsApp messages automatically.

@@ -40,11 +40,8 @@ function filesBucket() {
 }
 
 export async function POST(_: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "importaciones", action: "edit" });
   if (!auth.ok) return auth.response;
-  if (auth.user.role === "viewer") {
-    return Response.json({ error: "Acceso de solo lectura." }, { status: 403 });
-  }
   const { id } = await context.params;
   const db = getDb();
   const [file] = await db

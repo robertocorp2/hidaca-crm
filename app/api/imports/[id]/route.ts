@@ -8,7 +8,7 @@ import {
   importIssues,
   sourceFieldValues,
 } from "../../../../db/schema";
-import { authorizeApi } from "../../../lib/authorization";
+import { authorizeApi, can } from "../../../lib/authorization";
 import { parseJson, safeImportSummary } from "../../../lib/import-service";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -40,7 +40,7 @@ function redactInternalPreview(value: unknown) {
 }
 
 export async function GET(_: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "importaciones", action: "view" });
   if (!auth.ok) return auth.response;
   const { id } = await context.params;
   const db = getDb();
@@ -103,8 +103,8 @@ export async function GET(_: Request, context: RouteContext) {
       .limit(5_000),
   ]);
   const preview = parseJson<unknown>(file.normalizedPreview, {});
-  const safePreview =
-    auth.user.role === "viewer" ? redactInternalPreview(preview) : preview;
+  const mayAdminister = can(auth.user, "importaciones", "administer");
+  const safePreview = mayAdminister ? preview : redactInternalPreview(preview);
   return Response.json(
     {
       import: safeImportSummary(file),
@@ -117,7 +117,7 @@ export async function GET(_: Request, context: RouteContext) {
         reasons: parseJson(candidate.reasons, []),
       })),
       sourceValues:
-        auth.user.role === "viewer"
+        !mayAdminister
           ? values.filter(
               (value) =>
                 value.canonicalEntity !== "material_component" &&

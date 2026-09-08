@@ -8,7 +8,7 @@ import { cleanText } from "../../lib/crm";
 import { upsertSearchDocument } from "../../lib/search";
 
 export async function GET(request: Request) {
-  const auth = await authorizeInvoiceApi();
+  const auth = await authorizeInvoiceApi({ module: "pagos" });
   if (!auth.ok) return auth.response;
   const url = new URL(request.url);
   const q = (url.searchParams.get("q") ?? "").trim().slice(0, 120);
@@ -83,7 +83,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const auth = await authorizeInvoiceApi({ write: true });
+  const auth = await authorizeInvoiceApi({ module: "pagos", write: true, action: "create" });
   if (!auth.ok) return auth.response;
   const payload = (await request.json()) as Record<string, unknown>;
   const businessId = cleanText(payload.businessId, 80);

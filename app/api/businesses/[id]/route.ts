@@ -17,7 +17,7 @@ import {
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function GET(_: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "clientes", action: "view" });
   if (!auth.ok) return auth.response;
   const { id } = await context.params;
   const db = getDb();
@@ -32,6 +32,9 @@ export async function GET(_: Request, context: RouteContext) {
   const query = async (sqlText: string) =>
     (await getD1().prepare(sqlText).bind(id).all<Record<string, unknown>>())
       .results ?? [];
+  const queryMany = async (sqlText: string, ...bindings: string[]) =>
+    (await getD1().prepare(sqlText).bind(...bindings).all<Record<string, unknown>>())
+      .results ?? [];
   const queryTwice = async (sqlText: string) =>
     (await getD1().prepare(sqlText).bind(id, id).all<Record<string, unknown>>())
       .results ?? [];
@@ -39,11 +42,13 @@ export async function GET(_: Request, context: RouteContext) {
     relatedContacts,
     projects,
     relatedOpportunities,
-    invoices,
     quotations,
+    invoices,
     payments,
     addresses,
     documents,
+    sourceDocuments,
+    cases,
     history,
   ] = await Promise.all([
     query(`SELECT id, name, email, phone, mobile_phone AS mobilePhone, title
@@ -57,11 +62,6 @@ export async function GET(_: Request, context: RouteContext) {
       expected_close_date AS expectedCloseDate FROM opportunities
       WHERE business_id = ? AND archived_at IS NULL
       ORDER BY updated_at DESC LIMIT 250`),
-    query(`SELECT id, invoice_number_raw AS invoiceNumber, status, currency,
-      total_amount AS totalAmount, balance_amount_snapshot AS balanceAmountSnapshot,
-      issue_date AS issueDate, due_date AS dueDate
-      FROM invoices WHERE business_id = ? AND archived_at IS NULL
-      ORDER BY COALESCE(issue_date, updated_at) DESC LIMIT 250`),
     query(`SELECT q.id, q.quotation_number AS quotationNumber, q.title, q.status,
       q.currency, q.updated_at AS updatedAt,
       (SELECT source_total FROM quotation_financials f
@@ -70,19 +70,49 @@ export async function GET(_: Request, context: RouteContext) {
        r.revision_number DESC LIMIT 1) AS sourceTotal
       FROM quotations q WHERE q.business_id = ? AND q.archived_at IS NULL
       ORDER BY q.updated_at DESC LIMIT 250`),
+    query(`SELECT i.id, i.invoice_number_raw AS invoiceNumberRaw,
+      i.status, i.issue_date AS issueDate, i.due_date AS dueDate,
+      i.currency, i.total_amount AS totalAmount,
+      i.balance_amount_snapshot AS balanceAmount,
+      i.updated_at AS updatedAt
+      FROM invoices i WHERE i.business_id = ? AND i.archived_at IS NULL
+      ORDER BY COALESCE(i.issue_date, i.created_at) DESC LIMIT 250`),
     query(`SELECT id, type, amount, currency, payment_date AS paymentDate,
       method, status, label FROM payments
       WHERE business_id = ? ORDER BY COALESCE(payment_date, created_at) DESC LIMIT 250`),
     query(`SELECT id, type, label, line1, line2, city, province,
       country, is_primary AS isPrimary FROM addresses
       WHERE business_id = ? LIMIT 250`),
-    query(`SELECT DISTINCT d.id, d.name, d.content_type AS contentType,
+    queryMany(`SELECT DISTINCT d.id, d.name, d.content_type AS contentType,
       d.size, d.extension, dl.purpose, dl.created_at AS linkedAt
       FROM documents d JOIN document_links dl ON dl.document_id = d.id
-      JOIN quotation_revisions r ON r.id = dl.entity_id
-        AND dl.entity_type = 'quotation_revision'
-      JOIN quotations q ON q.id = r.quotation_id
-      WHERE q.business_id = ? ORDER BY dl.created_at DESC LIMIT 250`),
+      WHERE (dl.entity_type IN ('business', 'businesses', 'empresa') AND dl.entity_id = ?)
+         OR (dl.entity_type = 'contact' AND dl.entity_id IN (SELECT id FROM contacts WHERE business_id = ?))
+         OR (dl.entity_type = 'project' AND dl.entity_id IN (SELECT id FROM projects WHERE business_id = ?))
+         OR (dl.entity_type = 'opportunity' AND dl.entity_id IN (SELECT id FROM opportunities WHERE business_id = ?))
+         OR (dl.entity_type = 'quotation' AND dl.entity_id IN (SELECT id FROM quotations WHERE business_id = ?))
+         OR (dl.entity_type = 'quotation_revision' AND dl.entity_id IN (
+           SELECT r.id FROM quotation_revisions r JOIN quotations q ON q.id = r.quotation_id WHERE q.business_id = ?
+         ))
+         OR (dl.entity_type = 'invoice' AND dl.entity_id IN (SELECT id FROM invoices WHERE business_id = ?))
+         OR (dl.entity_type = 'payment' AND dl.entity_id IN (SELECT id FROM payments WHERE business_id = ?))
+         OR d.id IN (SELECT source_document_id FROM invoices WHERE business_id = ? AND source_document_id IS NOT NULL)
+      ORDER BY linkedAt DESC LIMIT 250`, id, id, id, id, id, id, id, id, id),
+    queryMany(`SELECT NULL AS id, sr.original_filename AS name, NULL AS contentType,
+      NULL AS size, NULL AS extension, 'source' AS purpose, sr.created_at AS linkedAt,
+      sr.original_uri AS originalUri, sr.availability
+      FROM source_references sr
+      WHERE sr.original_filename <> '' AND sr.revision_id IN (
+        SELECT r.id FROM quotation_revisions r JOIN quotations q ON q.id = r.quotation_id WHERE q.business_id = ?
+      )
+      ORDER BY sr.created_at DESC LIMIT 250`, id),
+    query(`SELECT id, title, status, customer_name AS customerName,
+      contact, amount, balance, due_date AS dueDate,
+      created_at AS createdAt, updated_at AS updatedAt
+      FROM business_records
+      WHERE module = 'ordenes-cambio' AND archived_at IS NULL
+        AND customer_name = (SELECT name FROM businesses WHERE id = ?)
+      ORDER BY updated_at DESC LIMIT 250`),
     queryTwice(`SELECT entity_type AS entityType, entity_id AS entityId, action,
       actor_email AS actorEmail, reason, created_at AS createdAt
       FROM entity_history
@@ -94,17 +124,22 @@ export async function GET(_: Request, context: RouteContext) {
          )
       ORDER BY created_at DESC LIMIT 250`),
   ]);
+  const mergedDocuments = [...documents, ...sourceDocuments].filter((item, index, all) => {
+    const key = String(item.id ?? item.originalUri ?? `${item.name}:${item.linkedAt}`);
+    return all.findIndex((candidate) => String(candidate.id ?? candidate.originalUri ?? `${candidate.name}:${candidate.linkedAt}`) === key) === index;
+  });
   return Response.json(
     {
       business,
       contacts: relatedContacts,
       projects,
       opportunities: relatedOpportunities,
-      invoices,
       quotations,
+      invoices,
       payments,
       addresses,
-      documents,
+      documents: mergedDocuments,
+      cases,
       history,
     },
     { headers: { "cache-control": "private, no-store" } },
@@ -112,11 +147,8 @@ export async function GET(_: Request, context: RouteContext) {
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "clientes", action: "edit" });
   if (!auth.ok) return auth.response;
-  if (auth.user.role === "viewer") {
-    return Response.json({ error: "Acceso de solo lectura." }, { status: 403 });
-  }
 
   const { id } = await context.params;
   const payload = (await request.json()) as Record<string, unknown>;
@@ -207,11 +239,8 @@ export async function PATCH(request: Request, context: RouteContext) {
 }
 
 export async function DELETE(_: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "clientes", action: "delete" });
   if (!auth.ok) return auth.response;
-  if (auth.user.role === "viewer") {
-    return Response.json({ error: "Acceso de solo lectura." }, { status: 403 });
-  }
 
   const { id } = await context.params;
   const db = getDb();

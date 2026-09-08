@@ -5,7 +5,7 @@ export async function GET(
   _request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const auth = await authorizeInvoiceApi();
+  const auth = await authorizeInvoiceApi({ module: "pagos" });
   if (!auth.ok) return auth.response;
   const { id } = await context.params;
   const payment = await getD1()

@@ -20,7 +20,7 @@ test("global search is protected, bounded, keyboard accessible, and deep-linked"
   assert.match(searchUi, /role="combobox"/);
 });
 
-test("all CRM write routes enforce authorization and viewer read-only access", async () => {
+test("all CRM routes enforce explicit module-level authorization", async () => {
   const paths = [
     "../app/api/businesses/route.ts",
     "../app/api/businesses/[id]/route.ts",
@@ -43,10 +43,10 @@ test("all CRM write routes enforce authorization and viewer read-only access", a
   const routes = await Promise.all(paths.map(read));
   for (const [index, route] of routes.entries()) {
     assert.match(route, /authorizeApi/, paths[index]);
-    assert.match(route, /role === "viewer"|authorizeApi\(true\)/, paths[index]);
+    assert.match(route, /authorizeApi\(\{ module: "/, paths[index]);
   }
-  assert.match(routes[8], /authorizeApi\(true\)/);
-  assert.match(routes[13], /authorizeApi\(true\)/);
+  assert.match(routes[8], /action: "administer"/);
+  assert.match(routes[13], /action: "administer"/);
 });
 
 test("lead conversion is duplicate-aware, atomic, idempotent, and auditable", async () => {
@@ -114,15 +114,15 @@ test("Schedule and Calendar render the same activities collection", async () => 
 });
 
 test("user-facing CRM terminology is standardized in Spanish", async () => {
-  const [modules, shell, entities] = await Promise.all([
+  const [modules, navigation, entities] = await Promise.all([
     read("../app/lib/modules.ts"),
-    read("../app/app/operations-client.tsx"),
+    read("../app/app/navigation.tsx"),
     read("../app/app/entity-views.tsx"),
   ]);
   assert.match(modules, /label: "Empresas"/);
   assert.match(modules, /label: "Contactos"/);
   assert.match(modules, /label: "Casos"/);
-  assert.match(shell, /label="Prospectos"/);
-  assert.match(shell, /label="Oportunidades"/);
+  assert.match(navigation, /label: "Prospectos"/);
+  assert.match(navigation, /label: "Oportunidades"/);
   assert.match(entities, /Empresas|Empresa/);
 });

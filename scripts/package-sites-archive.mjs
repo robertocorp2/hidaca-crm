@@ -6,18 +6,17 @@ import { fileURLToPath } from "node:url";
 
 const forwardMigrationPattern = /^\d{4}_[^/]+\.sql$/;
 const snapshotPattern = /^\d{4}_snapshot\.json$/;
-const expectedMigrationNumbers = Array.from({ length: 15 }, (_, index) => index);
-
 function assertExpectedMigrations(migrationNames) {
   const migrationNumbers = migrationNames.map((name) => Number(name.slice(0, 4)));
+  const expectedMigrationNumbers = Array.from({ length: migrationNumbers.length }, (_, index) => index);
   if (
-    migrationNumbers.length !== expectedMigrationNumbers.length ||
+    migrationNumbers.length === 0 ||
     migrationNumbers.some(
       (number, index) => number !== expectedMigrationNumbers[index],
     )
   ) {
     throw new Error(
-      `Expected forward migrations 0000 through 0014, found: ${migrationNames.join(", ")}`,
+      `Expected contiguous forward migrations starting at 0000, found: ${migrationNames.join(", ")}`,
     );
   }
 }

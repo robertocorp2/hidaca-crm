@@ -17,7 +17,7 @@ import {
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function GET(_: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "contactos", action: "view" });
   if (!auth.ok) return auth.response;
   const { id } = await context.params;
   const db = getDb();
@@ -35,7 +35,15 @@ export async function GET(_: Request, context: RouteContext) {
   const queryOne = async (sqlText: string) =>
     (await getD1().prepare(sqlText).bind(id).all<Record<string, unknown>>())
       .results ?? [];
-  const [projects, quotations, opportunities, invoices, documents, history] = await Promise.all([
+  const queryMany = async (sqlText: string, ...bindings: string[]) =>
+    (await getD1().prepare(sqlText).bind(...bindings).all<Record<string, unknown>>())
+      .results ?? [];
+  const [business, projects, opportunities, quotations, invoices, documents, sourceDocuments, cases, history] = await Promise.all([
+    queryOne(`SELECT b.id, b.name, b.customer_type AS customerType, b.rnc,
+      b.email, b.phone, b.mobile_phone AS mobilePhone, b.address,
+      b.owner_email AS ownerEmail, b.updated_at AS updatedAt
+      FROM businesses b JOIN contacts c ON c.business_id = b.id
+      WHERE c.id = ? AND b.archived_at IS NULL LIMIT 1`),
     query(
       `SELECT DISTINCT p.id, p.name, p.status,
         p.service_category AS serviceCategory, pc.role,
@@ -45,6 +53,13 @@ export async function GET(_: Request, context: RouteContext) {
        WHERE p.archived_at IS NULL
          AND (p.primary_contact_id = ? OR pc.contact_id = ?)
        ORDER BY p.updated_at DESC LIMIT 250`,
+    ),
+    queryOne(
+      `SELECT id, title, stage, outcome, estimated_value AS estimatedValue,
+        expected_close_date AS expectedCloseDate, updated_at AS updatedAt
+       FROM opportunities
+       WHERE primary_contact_id = ? AND archived_at IS NULL
+       ORDER BY updated_at DESC LIMIT 250`,
     ),
     query(
       `SELECT q.id, q.quotation_number AS quotationNumber, q.title, q.status,
@@ -63,31 +78,63 @@ export async function GET(_: Request, context: RouteContext) {
        ORDER BY coalesce(r.quotation_date, q.updated_at) DESC LIMIT 250`,
     ),
     queryOne(
-      `SELECT o.id, o.title, o.stage, o.outcome,
-        o.estimated_value AS estimatedValue,
-        o.expected_close_date AS expectedCloseDate
-       FROM opportunities o
-       WHERE o.primary_contact_id = ? AND o.archived_at IS NULL
-       ORDER BY o.updated_at DESC LIMIT 250`,
+      `SELECT i.id, i.invoice_number_raw AS invoiceNumberRaw,
+        i.status, i.issue_date AS issueDate, i.due_date AS dueDate,
+        i.currency, i.total_amount AS totalAmount,
+        i.balance_amount_snapshot AS balanceAmount,
+        i.updated_at AS updatedAt
+       FROM invoices i
+       WHERE i.contact_id = ? AND i.archived_at IS NULL
+       ORDER BY COALESCE(i.issue_date, i.created_at) DESC LIMIT 250`,
     ),
+    queryMany(`SELECT DISTINCT d.id, d.name, d.content_type AS contentType,
+        d.size, d.extension, dl.purpose, dl.created_at AS linkedAt
+       FROM documents d JOIN document_links dl ON dl.document_id = d.id
+       WHERE (dl.entity_type IN ('contact', 'contacts') AND dl.entity_id = ?)
+          OR (dl.entity_type = 'business' AND dl.entity_id = (SELECT business_id FROM contacts WHERE id = ?))
+          OR (dl.entity_type = 'project' AND dl.entity_id IN (
+            SELECT p.id FROM projects p LEFT JOIN project_contacts pc ON pc.project_id = p.id
+            WHERE p.primary_contact_id = ? OR pc.contact_id = ?
+          ))
+          OR (dl.entity_type = 'opportunity' AND dl.entity_id IN (
+            SELECT o.id FROM opportunities o WHERE o.primary_contact_id = ?
+               OR o.business_id = (SELECT business_id FROM contacts WHERE id = ?)
+          ))
+          OR (dl.entity_type = 'quotation' AND dl.entity_id IN (
+            SELECT q.id FROM quotations q LEFT JOIN project_contacts pc ON pc.project_id = q.project_id
+            WHERE q.primary_contact_id = ? OR pc.contact_id = ?
+               OR q.business_id = (SELECT business_id FROM contacts WHERE id = ?)
+          ))
+          OR (dl.entity_type = 'quotation_revision' AND dl.entity_id IN (
+            SELECT r.id FROM quotation_revisions r JOIN quotations q ON q.id = r.quotation_id
+            LEFT JOIN project_contacts pc ON pc.project_id = q.project_id
+            WHERE q.primary_contact_id = ? OR pc.contact_id = ?
+               OR q.business_id = (SELECT business_id FROM contacts WHERE id = ?)
+          ))
+          OR (dl.entity_type = 'invoice' AND dl.entity_id IN (
+            SELECT i.id FROM invoices i WHERE i.contact_id = ?
+               OR i.business_id = (SELECT business_id FROM contacts WHERE id = ?)
+          ))
+       ORDER BY linkedAt DESC LIMIT 250`, id, id, id, id, id, id, id, id, id, id, id, id, id, id),
+    queryMany(`SELECT NULL AS id, sr.original_filename AS name, NULL AS contentType,
+      NULL AS size, NULL AS extension, 'source' AS purpose, sr.created_at AS linkedAt,
+      sr.original_uri AS originalUri, sr.availability
+      FROM source_references sr
+      WHERE sr.original_filename <> '' AND sr.revision_id IN (
+        SELECT r.id FROM quotation_revisions r JOIN quotations q ON q.id = r.quotation_id
+        LEFT JOIN project_contacts pc ON pc.project_id = q.project_id
+        WHERE q.primary_contact_id = ? OR pc.contact_id = ?
+           OR q.business_id = (SELECT business_id FROM contacts WHERE id = ?)
+      )
+      ORDER BY sr.created_at DESC LIMIT 250`, id, id, id),
     queryOne(
-      `SELECT id, invoice_number_raw AS invoiceNumber, status, currency,
-        total_amount AS totalAmount, balance_amount_snapshot AS balanceAmountSnapshot,
-        issue_date AS issueDate, due_date AS dueDate
-       FROM invoices WHERE contact_id = ? AND archived_at IS NULL
-       ORDER BY COALESCE(issue_date, updated_at) DESC LIMIT 250`,
-    ),
-    query(
-      `SELECT DISTINCT d.id, d.name, d.size, d.extension,
-        sr.original_filename AS originalFilename,
-        sr.original_uri AS originalUri, sr.availability
-       FROM source_references sr
-       LEFT JOIN documents d ON d.id = sr.document_id
-       JOIN quotation_revisions r ON r.id = sr.revision_id
-       JOIN quotations q ON q.id = r.quotation_id
-       LEFT JOIN project_contacts pc ON pc.project_id = q.project_id
-       WHERE q.primary_contact_id = ? OR pc.contact_id = ?
-       ORDER BY sr.created_at DESC LIMIT 250`,
+      `SELECT id, title, status, customer_name AS customerName,
+        contact, amount, balance, due_date AS dueDate,
+        created_at AS createdAt, updated_at AS updatedAt
+       FROM business_records
+       WHERE module = 'ordenes-cambio' AND archived_at IS NULL
+         AND contact = (SELECT name FROM contacts WHERE id = ?)
+       ORDER BY updated_at DESC LIMIT 250`,
     ),
     query(
       `SELECT action, actor_email AS actorEmail, reason,
@@ -102,18 +149,29 @@ export async function GET(_: Request, context: RouteContext) {
        ORDER BY created_at DESC LIMIT 250`,
     ),
   ]);
+  const mergedDocuments = [...documents, ...sourceDocuments].filter((item, index, all) => {
+    const key = String(item.id ?? item.originalUri ?? `${item.name}:${item.linkedAt}`);
+    return all.findIndex((candidate) => String(candidate.id ?? candidate.originalUri ?? `${candidate.name}:${candidate.linkedAt}`) === key) === index;
+  });
   return Response.json(
-    { contact, projects, opportunities, quotations, invoices, documents, history },
+    {
+      contact,
+      business: business[0] ?? null,
+      projects,
+      opportunities,
+      quotations,
+      invoices,
+      documents: mergedDocuments,
+      cases,
+      history,
+    },
     { headers: { "cache-control": "private, no-store" } },
   );
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "contactos", action: "edit" });
   if (!auth.ok) return auth.response;
-  if (auth.user.role === "viewer") {
-    return Response.json({ error: "Acceso de solo lectura." }, { status: 403 });
-  }
 
   const { id } = await context.params;
   const payload = (await request.json()) as Record<string, unknown>;
@@ -229,11 +287,8 @@ export async function PATCH(request: Request, context: RouteContext) {
 }
 
 export async function DELETE(_: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "contactos", action: "delete" });
   if (!auth.ok) return auth.response;
-  if (auth.user.role === "viewer") {
-    return Response.json({ error: "Acceso de solo lectura." }, { status: 403 });
-  }
 
   const { id } = await context.params;
   const db = getDb();

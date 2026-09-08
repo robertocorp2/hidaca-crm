@@ -1,4 +1,5 @@
-import { desc, isNull } from "drizzle-orm";
+import { and, desc, inArray, isNull } from "drizzle-orm";
+import { forbidden } from "next/navigation";
 import {
   chatGPTSignInPath,
   chatGPTSignOutPath,
@@ -18,10 +19,12 @@ import {
   opportunityStageHistory,
   staffUsers,
 } from "../../db/schema";
-import { getAuthorizedUser } from "../lib/authorization";
+import { can, getAuthorizedUser } from "../lib/authorization";
+import { moduleForView, modules } from "../lib/modules";
 import { OperationsClient } from "./operations-client";
 import { env } from "cloudflare:workers";
 import { isInvoiceImportPhase1Enabled } from "../lib/invoice-import-feature";
+import { getDashboardReceivableBalance } from "../lib/dashboard-financials";
 
 export const metadata = { title: "Panel" };
 export const dynamic = "force-dynamic";
@@ -73,6 +76,18 @@ export default async function OperationsPage({
     );
   }
 
+  const requestedModule = moduleForView(initialView ?? "resumen");
+  if (requestedModule && !can(user, requestedModule, "view")) forbidden();
+
+  const allowedRecordModules = modules
+    .filter((module) => {
+      const permissionModule = module.key === "ordenes-cambio" ? "casos" : module.key;
+      return can(user, permissionModule, "view");
+    })
+    .map((module) => module.key);
+  const may = (module: Parameters<typeof can>[1]) => can(user, module, "view");
+  const invoiceFeatureEnabled = isInvoiceImportPhase1Enabled(env);
+
   const db = getDb();
   const [
     records,
@@ -86,57 +101,64 @@ export default async function OperationsPage({
     opportunityHistory,
     crmActivities,
     quoteLinks,
+    dashboardReceivableBalance,
   ] = await Promise.all([
-    db
+    allowedRecordModules.length ? db
       .select()
       .from(businessRecords)
-      .where(isNull(businessRecords.archivedAt))
+      .where(and(isNull(businessRecords.archivedAt), inArray(businessRecords.module, allowedRecordModules)))
       .orderBy(desc(businessRecords.updatedAt))
-      .limit(250),
-    db.select().from(documents).orderBy(desc(documents.createdAt)).limit(250),
-    user.role === "admin" ? db.select().from(staffUsers) : Promise.resolve([]),
-    db
+      .limit(250) : Promise.resolve([]),
+    may("documentos") ? db.select().from(documents).orderBy(desc(documents.createdAt)).limit(250) : Promise.resolve([]),
+    may("usuarios") ? db.select().from(staffUsers) : Promise.resolve([]),
+    may("clientes") ? db
       .select()
       .from(businesses)
       .where(isNull(businesses.archivedAt))
       .orderBy(desc(businesses.updatedAt))
-      .limit(500),
-    db
+      .limit(500) : Promise.resolve([]),
+    may("contactos") ? db
       .select()
       .from(contacts)
       .where(isNull(contacts.archivedAt))
       .orderBy(desc(contacts.updatedAt))
-      .limit(500),
-    db
+      .limit(500) : Promise.resolve([]),
+    may("prospectos") ? db
       .select()
       .from(leads)
       .where(isNull(leads.archivedAt))
       .orderBy(desc(leads.updatedAt))
-      .limit(500),
-    db
+      .limit(500) : Promise.resolve([]),
+    may("prospectos") ? db
       .select()
       .from(leadStatusHistory)
       .orderBy(desc(leadStatusHistory.changedAt))
-      .limit(2_000),
-    db
+      .limit(2_000) : Promise.resolve([]),
+    may("oportunidades") ? db
       .select()
       .from(opportunities)
       .where(isNull(opportunities.archivedAt))
       .orderBy(desc(opportunities.updatedAt))
-      .limit(500),
-    db
+      .limit(500) : Promise.resolve([]),
+    may("oportunidades") ? db
       .select()
       .from(opportunityStageHistory)
       .orderBy(desc(opportunityStageHistory.changedAt))
-      .limit(2_000),
-    db
+      .limit(2_000) : Promise.resolve([]),
+    may("agenda") ? db
       .select()
       .from(activities)
       .where(isNull(activities.archivedAt))
       .orderBy(desc(activities.startAt))
-      .limit(1_000),
-    db.select().from(opportunityQuotes).limit(2_000),
+      .limit(1_000) : Promise.resolve([]),
+    may("oportunidades") && may("cotizaciones") ? db.select().from(opportunityQuotes).limit(2_000) : Promise.resolve([]),
+    invoiceFeatureEnabled && may("cuentas-cobrar")
+      ? getDashboardReceivableBalance()
+      : Promise.resolve(null),
   ]);
+
+  // Keep time-sensitive dashboard totals deterministic across server and client render.
+  const initialNow = Date.now();
 
   return (
     <OperationsClient
@@ -152,9 +174,11 @@ export default async function OperationsPage({
       initialOpportunityHistory={opportunityHistory}
       initialActivities={crmActivities}
       initialOpportunityQuotes={quoteLinks}
+      initialReceivableBalance={dashboardReceivableBalance}
+      initialNow={initialNow}
       initialView={initialView}
       initialRecord={initialRecord}
-      invoiceFeatureEnabled={isInvoiceImportPhase1Enabled(env)}
+      invoiceFeatureEnabled={invoiceFeatureEnabled}
       signOutHref={chatGPTSignOutPath("/")}
     />
   );

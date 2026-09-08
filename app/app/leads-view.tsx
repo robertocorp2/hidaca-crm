@@ -7,6 +7,7 @@ import {
   type LeadStatus,
 } from "../lib/crm";
 import { PipelineStepper, type PipelineOutcome } from "./pipeline";
+import { RecordAiPanel } from "./record-ai-panel";
 import type {
   ActivityRow,
   BusinessRow,
@@ -16,11 +17,17 @@ import type {
   OpportunityRow,
 } from "./types";
 import {
+  ActiveFilterChip,
+  AutocompleteInput,
   Breadcrumbs,
   Empty,
+  FilterableStatus,
   InlineAlert,
   Modal,
+  PageHeader,
+  PageSizeControl,
   Pagination,
+  SortHeader,
   dateTime,
   useFormGuard,
   usePagination,
@@ -57,6 +64,9 @@ export function LeadsView({
   selectedId,
   setSelectedId,
   canWrite,
+  canAskAi,
+  canProposeAi,
+  canApproveAi,
   isAdmin,
   currentUserEmail,
   setMessage,
@@ -73,6 +83,9 @@ export function LeadsView({
   selectedId: string | null;
   setSelectedId(value: string | null): void;
   canWrite: boolean;
+  canAskAi: boolean;
+  canProposeAi: boolean;
+  canApproveAi: boolean;
   isAdmin: boolean;
   currentUserEmail: string;
   setMessage(message: string): void;
@@ -82,7 +95,9 @@ export function LeadsView({
   const [search, setSearch] = useUrlState("q");
   const [statusFilter, setStatusFilter] = useUrlState("status");
   const [ownerFilter, setOwnerFilter] = useUrlState("owner");
-  const [sort, setSort] = useUrlState("sort", "recent");
+  const [sort, setSort] = useUrlState("sort", "updated");
+  const [direction, setDirection] = useUrlState("dir", "desc");
+  const [pageSizeValue, setPageSizeValue] = useUrlState("pageSize", "10");
   const [editing, setEditing] = useState<LeadRow | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -103,17 +118,24 @@ export function LeadsView({
             .includes(term),
       )
       .toSorted((left, right) => {
-        if (sort === "business")
-          return left.businessName.localeCompare(right.businessName);
-        if (sort === "status")
-          return (
-            leadStatuses.indexOf(left.status) -
-            leadStatuses.indexOf(right.status)
-          );
-        return right.updatedAt.localeCompare(left.updatedAt);
+        const multiplier = direction === "desc" ? -1 : 1;
+        if (sort === "status") return multiplier * (leadStatuses.indexOf(left.status) - leadStatuses.indexOf(right.status));
+        const leftValue = sort === "business" ? left.businessName : sort === "contact" ? left.contactName : sort === "owner" ? left.ownerEmail : left.updatedAt;
+        const rightValue = sort === "business" ? right.businessName : sort === "contact" ? right.contactName : sort === "owner" ? right.ownerEmail : right.updatedAt;
+        return multiplier * leftValue.localeCompare(rightValue, "es", { sensitivity: "base" });
       });
-  }, [leads, ownerFilter, search, sort, statusFilter]);
-  const { page, pageItems, setPage, totalPages } = usePagination(rows);
+  }, [direction, leads, ownerFilter, search, sort, statusFilter]);
+  const pageSize = pageSizeValue === "all" ? Math.max(rows.length, 1) : Number(pageSizeValue) || 10;
+  const { page, pageItems, setPage, totalPages } = usePagination(rows, pageSize);
+
+  function sortBy(column: string) {
+    if (sort === column) setDirection(direction === "asc" ? "desc" : "asc");
+    else {
+      setSort(column);
+      setDirection("asc");
+    }
+    setPage(1);
+  }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -423,6 +445,7 @@ export function LeadsView({
           </div>
         )}
         <section className="detail-grid">
+          <article className="detail-card record-ai-detail-card"><h2>Asistente contextual</h2><p className="muted">Consulta relaciones e historial sin salir del prospecto.</p><RecordAiPanel canApprove={canApproveAi} canAsk={canAskAi} canPropose={canProposeAi} entityId={selected.id} entityType="lead" title={selected.businessName || selected.contactName} /></article>
           <article className="detail-card">
             <h2>Detalles del prospecto</h2>
             <dl>
@@ -462,7 +485,15 @@ export function LeadsView({
             ) : <p className="muted">No hay actividades relacionadas.</p>}
           </article>
         </section>
-        {showForm && <LeadForm busy={busy} currentUserEmail={currentUserEmail} error={formError} lead={editing} onCancel={() => setShowForm(false)} onSubmit={save} />}
+        {showForm && (
+          <Modal
+            onClose={() => setShowForm(false)}
+            title={editing ? "Editar prospecto" : "Nuevo prospecto"}
+            wide
+          >
+            <LeadForm busy={busy} currentUserEmail={currentUserEmail} error={formError} lead={editing} onCancel={() => setShowForm(false)} onSubmit={save} />
+          </Modal>
+        )}
         {conversion && (
           <ConversionDialog
             businesses={businesses}
@@ -494,21 +525,27 @@ export function LeadsView({
   return (
     <>
       <Breadcrumbs items={[{ label: "Inicio" }, { label: "Prospectos" }]} />
-      <div className="page-heading">
-        <div><p className="eyebrow">CRM</p><h1>Prospectos</h1><p>Desde el primer contacto hasta su conversión.</p></div>
-        {canWrite && <button className="primary-button" onClick={() => { setEditing(null); setFormError(""); setShowForm(true); }}>Nuevo prospecto</button>}
-      </div>
+      <PageHeader action={canWrite ? <button className="primary-button" onClick={() => { setEditing(null); setFormError(""); setShowForm(true); }}>Nuevo prospecto</button> : undefined} description="Desde el primer contacto hasta su conversión." eyebrow="CRM" title="Prospectos" />
       <div className="toolbar toolbar-filters">
-        <input aria-label="Buscar prospectos" autoComplete="off" name="q" onChange={(event) => setSearch(event.target.value)} placeholder="Buscar empresa, contacto, correo o teléfono…" value={search} />
-        <select aria-label="Filtrar prospectos por estado" onChange={(event) => setStatusFilter(event.target.value)} value={statusFilter}><option value="">Todos los estados</option>{leadStatuses.map((status) => <option key={status} value={status}>{leadStatusLabels[status]}</option>)}</select>
-        <select aria-label="Filtrar prospectos por responsable" onChange={(event) => setOwnerFilter(event.target.value)} value={ownerFilter}><option value="">Todos los responsables</option>{owners.map((owner) => <option key={owner}>{owner}</option>)}</select>
-        <select aria-label="Ordenar prospectos" onChange={(event) => setSort(event.target.value)} value={sort}><option value="recent">Actualizados recientemente</option><option value="business">Empresa</option><option value="status">Estado del pipeline</option></select>
-        <span>{rows.length} prospectos</span>
+        <AutocompleteInput ariaLabel="Buscar prospectos" onChange={(value) => { setSearch(value); setPage(1); }} onSelect={(option) => { setSearch(option.label); setPage(1); }} options={rows.slice(0, 8).map((lead) => ({ id: lead.id, label: lead.businessName, secondary: lead.contactName }))} placeholder="Escribe una empresa, contacto o correo…" value={search} />
+        <select aria-label="Filtrar prospectos por estado" onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }} value={statusFilter}><option value="">Todos los estados</option>{leadStatuses.map((status) => <option key={status} value={status}>{leadStatusLabels[status]}</option>)}</select>
+        <select aria-label="Filtrar prospectos por responsable" onChange={(event) => { setOwnerFilter(event.target.value); setPage(1); }} value={ownerFilter}><option value="">Todos los responsables</option>{owners.map((owner) => <option key={owner}>{owner}</option>)}</select>
+        <PageSizeControl label="Prospectos por página" onChange={(value) => { setPageSizeValue(value); setPage(1); }} value={pageSizeValue} />
+        <span className="record-count"><strong>{rows.length}</strong> prospectos</span>
       </div>
-      {showForm && <LeadForm busy={busy} currentUserEmail={currentUserEmail} error={formError} lead={editing} onCancel={() => setShowForm(false)} onSubmit={save} />}
+      {(statusFilter || ownerFilter) && <div className="active-filter-row">{statusFilter && <ActiveFilterChip label={`Estado: ${leadStatusLabels[statusFilter as LeadStatus] ?? statusFilter}`} onClear={() => { setStatusFilter(""); setPage(1); }} />}{ownerFilter && <ActiveFilterChip label={`Responsable: ${ownerFilter}`} onClear={() => { setOwnerFilter(""); setPage(1); }} />}</div>}
+      {showForm && (
+        <Modal
+          onClose={() => setShowForm(false)}
+          title={editing ? "Editar prospecto" : "Nuevo prospecto"}
+          wide
+        >
+          <LeadForm busy={busy} currentUserEmail={currentUserEmail} error={formError} lead={editing} onCancel={() => setShowForm(false)} onSubmit={save} />
+        </Modal>
+      )}
       <section className="panel">
         {rows.length ? (
-          <div className="table-wrap"><table className="responsive-table"><thead><tr><th>Empresa</th><th>Contacto</th><th>Estado</th><th>Responsable</th><th>Actualización</th></tr></thead><tbody>{pageItems.map((lead) => (
+          <div className="table-wrap"><table className="responsive-table collection-table leads-table"><thead><tr><th><SortHeader column="business" direction={direction as "asc" | "desc"} label="Empresa" onSort={sortBy} sort={sort} /></th><th><SortHeader column="contact" direction={direction as "asc" | "desc"} label="Contacto" onSort={sortBy} sort={sort} /></th><th><SortHeader column="status" direction={direction as "asc" | "desc"} label="Estado" onSort={sortBy} sort={sort} /></th><th><SortHeader column="owner" direction={direction as "asc" | "desc"} label="Responsable" onSort={sortBy} sort={sort} /></th><th><SortHeader column="updated" direction={direction as "asc" | "desc"} label="Actualización" onSort={sortBy} sort={sort} /></th></tr></thead><tbody>{pageItems.map((lead) => (
             <tr
               className="clickable-row"
               key={lead.id}
@@ -520,7 +557,7 @@ export function LeadsView({
                 }
               }}
               tabIndex={0}
-            ><td data-label="Empresa"><strong>{lead.businessName}</strong><span>{lead.source}</span></td><td data-label="Contacto">{lead.contactName}<span>{lead.email || lead.phone}</span></td><td data-label="Estado"><span className={`status status-${lead.status}`}>{leadStatusLabels[lead.status]}</span></td><td data-label="Responsable">{lead.ownerEmail}</td><td data-label="Actualización">{dateTime(lead.updatedAt)}</td></tr>
+            ><td data-label="Empresa"><strong title={lead.businessName}>{lead.businessName}</strong><span>{lead.source}</span></td><td data-label="Contacto">{lead.contactName}<span>{lead.email || lead.phone}</span></td><td data-label="Estado"><FilterableStatus className={`status-${lead.status}`} label={leadStatusLabels[lead.status]} onFilter={() => { setStatusFilter(lead.status); setPage(1); }} /></td><td data-label="Responsable">{lead.ownerEmail}</td><td data-label="Actualización">{dateTime(lead.updatedAt)}</td></tr>
           ))}</tbody></table></div>
         ) : <Empty action={canWrite ? <button className="primary-button" onClick={() => { setEditing(null); setFormError(""); setShowForm(true); }} type="button">Nuevo prospecto</button> : undefined} text="No hay prospectos en esta vista." />}
         <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
@@ -547,7 +584,6 @@ function LeadForm({
   const { formProps, requestCancel } = useFormGuard(onCancel);
   return (
     <form {...formProps} className="record-form" onSubmit={onSubmit}>
-      <div className="form-heading"><h2>{lead ? "Editar prospecto" : "Nuevo prospecto"}</h2><button aria-label="Cerrar" onClick={requestCancel} type="button">×</button></div>
       <InlineAlert message={error} />
       <div className="form-grid">
         <label>Empresa<input autoComplete="organization" defaultValue={lead?.businessName} name="businessName" required /></label>

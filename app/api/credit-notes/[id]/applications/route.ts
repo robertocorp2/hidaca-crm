@@ -18,7 +18,7 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const auth = await authorizeInvoiceApi({ write: true });
+  const auth = await authorizeInvoiceApi({ module: "notas-credito", write: true });
   if (!auth.ok) return auth.response;
   const { id: creditNoteId } = await context.params;
   const payload = (await request.json()) as Record<string, unknown>;

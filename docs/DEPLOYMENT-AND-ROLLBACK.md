@@ -12,7 +12,13 @@
    Schedule, Calendar, Documents, and Users.
 8. Retain screenshots and the version/deployment identifiers in release notes.
 
-The schema changes in `0002` through `0006` are applied by the Sites deployment
+For the AI foundation, configure only approved runtime secrets (`OPENAI_API_KEY`,
+`DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, and optional Cloudflare AI Gateway
+credentials) through Sites/Cloudflare secret management. Keep `AI_ENABLED` and
+`VOICE_AI_ENABLED` disabled until the client approvals and authenticated UI
+checks are complete.
+
+The schema changes in `0002` through `0006` and additive AI migrations `0018` and `0019` are applied by the Sites deployment
 workflow. They contain no DROP, DELETE, destructive rename, or R2 operation.
 `0004` adds the consolidated-register staging model, `0005` adds the normalized
 contact-name field, and `0006` adds the revision lookup index required by the
@@ -40,8 +46,10 @@ the additive migration itself caused a verified data issue.
 
 Time Travel restore is destructive to writes made after the selected point.
 It therefore requires explicit production approval and a verified timestamp.
-R2 files are independent of D1 and are not changed by either this migration or
-the normal rollback.
+R2 files are independent of D1. AI source audio is stored under `voice/` and
+has a retention deadline; disabling AI or rolling back application code does
+not delete that evidence. Remove expired audio only through a separately
+approved retention job.
 
 If an explicitly approved structural rollback is required instead of Time
 Travel, validate the down scripts on a copy first and run them newest-first:

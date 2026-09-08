@@ -232,7 +232,7 @@ export function BillingView({
           <p className="muted">Cargando…</p>
         ) : allRows.length ? (
           <div className="table-wrap">
-            <table>
+            <table className="collection-table billing-table">
               <thead>
                 <tr>
                   {columns(mode).map((column) => (

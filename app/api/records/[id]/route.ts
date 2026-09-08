@@ -3,6 +3,7 @@ import { getDb } from "../../../../db";
 import { businessRecords } from "../../../../db/schema";
 import { writeAudit } from "../../../lib/audit";
 import { authorizeApi } from "../../../lib/authorization";
+import { permissionModuleForLegacyRecord } from "../../../lib/modules";
 import { moduleSearchEntityType } from "../../../lib/crm";
 import {
   deleteSearchDocument,
@@ -17,13 +18,13 @@ function numberValue(value: unknown) {
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
-  const auth = await authorizeApi();
-  if (!auth.ok) return auth.response;
-  if (auth.user.role === "viewer") {
-    return Response.json({ error: "Acceso de solo lectura." }, { status: 403 });
-  }
-
   const { id } = await context.params;
+  const [stored] = await getDb().select({ module: businessRecords.module }).from(businessRecords)
+    .where(and(eq(businessRecords.id, id), isNull(businessRecords.archivedAt))).limit(1);
+  const permissionModule = stored && permissionModuleForLegacyRecord(stored.module);
+  if (!permissionModule) return Response.json({ error: "Registro no encontrado." }, { status: 404 });
+  const auth = await authorizeApi({ module: permissionModule, action: "edit" });
+  if (!auth.ok) return auth.response;
   const payload = (await request.json()) as Record<string, unknown>;
   const title = String(payload.title ?? "").trim();
   if (!title) {
@@ -65,13 +66,13 @@ export async function PATCH(request: Request, context: RouteContext) {
 }
 
 export async function DELETE(_: Request, context: RouteContext) {
-  const auth = await authorizeApi();
-  if (!auth.ok) return auth.response;
-  if (auth.user.role === "viewer") {
-    return Response.json({ error: "Acceso de solo lectura." }, { status: 403 });
-  }
-
   const { id } = await context.params;
+  const [stored] = await getDb().select({ module: businessRecords.module }).from(businessRecords)
+    .where(and(eq(businessRecords.id, id), isNull(businessRecords.archivedAt))).limit(1);
+  const permissionModule = stored && permissionModuleForLegacyRecord(stored.module);
+  if (!permissionModule) return Response.json({ error: "Registro no encontrado." }, { status: 404 });
+  const auth = await authorizeApi({ module: permissionModule, action: "delete" });
+  if (!auth.ok) return auth.response;
   const [record] = await getDb()
     .update(businessRecords)
     .set({

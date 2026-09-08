@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { authorizeApi } from "./authorization";
+import type { PermissionAction, PermissionModuleKey } from "./modules";
 import {
   invoiceImportRouteDisabledStatus,
   isInvoiceImportPhase1Enabled,
@@ -14,6 +15,8 @@ export function normalizedInvoiceFeatureEnabled() {
 export async function authorizeInvoiceApi(options?: {
   write?: boolean;
   admin?: boolean;
+  module?: PermissionModuleKey;
+  action?: PermissionAction;
 }) {
   if (
     invoiceImportRouteDisabledStatus({
@@ -31,16 +34,10 @@ export async function authorizeInvoiceApi(options?: {
       ),
     };
   }
-  const auth = await authorizeApi(options?.admin === true);
+  const auth = await authorizeApi({
+    module: options?.module ?? "facturas",
+    action: options?.action ?? (options?.admin ? "administer" : options?.write ? "edit" : "view"),
+  });
   if (!auth.ok) return auth;
-  if (options?.write && auth.user.role === "viewer") {
-    return {
-      ok: false as const,
-      response: Response.json(
-        { error: "Acceso de solo lectura." },
-        { status: 403 },
-      ),
-    };
-  }
   return auth;
 }

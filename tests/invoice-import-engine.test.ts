@@ -75,6 +75,69 @@ test("register snapshots never manufacture payment transactions", () => {
   );
 });
 
+test("the historical HIDACA register maps normalized headers and paid status", () => {
+  const headers = [
+    "MES", "FECHA", "Nombre", "Factura", "NCF", "Sub-Total", "Itbis",
+    "Total", "Estado",
+  ];
+  const values = [
+    "ENERO", "1/8/2021", "MUEBLES OMAR S A", "F-0001", "B0100000224",
+    "18,000.00", "3,240.00", "21,240.00", "pagado",
+  ];
+  const extraction: ImportExtraction = {
+    format: "xlsx",
+    parserName: "test",
+    parserVersion: "1",
+    hasMacros: false,
+    partial: false,
+    warnings: [],
+    pages: [],
+    sheets: [{
+      name: "2021",
+      range: "A1:I2",
+      merges: [],
+      cells: [headers, values].flatMap((row, rowIndex) =>
+        row.map((displayValue, columnIndex) => ({
+          sheet: "2021",
+          address: `${String.fromCharCode(65 + columnIndex)}${rowIndex + 1}`,
+          row: rowIndex + 1,
+          column: columnIndex + 1,
+          rawValue: displayValue,
+          displayValue,
+          formula: "",
+          cellType: "s",
+        })),
+      ),
+    }],
+  };
+  const result = analyzeInvoiceExtraction("registro facturas 2021.xlsx", "doc-register", extraction);
+  assert.equal(result.rows.length, 1);
+  assert.deepEqual(
+    {
+      issueDate: result.rows[0].normalizedValues.issue_date,
+      businessName: result.rows[0].normalizedValues.business_name,
+      invoiceNumber: result.rows[0].normalizedValues.invoice_number,
+      ncf: result.rows[0].normalizedValues.ncf,
+      subtotal: result.rows[0].normalizedValues.subtotal_amount,
+      tax: result.rows[0].normalizedValues.tax_amount,
+      total: result.rows[0].normalizedValues.total_amount,
+      status: result.rows[0].normalizedValues.status,
+    },
+    {
+      issueDate: "2021-01-08",
+      businessName: "MUEBLES OMAR S A",
+      invoiceNumber: "F0001",
+      ncf: "B0100000224",
+      subtotal: 18000,
+      tax: 3240,
+      total: 21240,
+      status: "paid",
+    },
+  );
+  assert.equal(result.rows[0].normalizedValues.paid_amount_snapshot, undefined);
+  assert.equal(result.allocations.length, 0);
+});
+
 test("document content outranks a misleading invoice filename", () => {
   const extraction: ImportExtraction = {
     ...registerExtraction(),

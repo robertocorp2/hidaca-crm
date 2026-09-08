@@ -18,7 +18,7 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const auth = await authorizeInvoiceApi({ write: true, admin: true });
+  const auth = await authorizeInvoiceApi({ module: "importaciones", write: true, admin: true });
   if (!auth.ok) return auth.response;
   const payload = (await request.json().catch(() => ({}))) as Record<
     string,
@@ -237,10 +237,12 @@ export async function POST(
                invoice_number_raw, invoice_number_normalized,
                issue_date, issue_date_raw, issue_year, ncf_raw,
                ncf_normalized, document_version, status, currency,
+               due_date, due_date_raw, payment_terms_raw,
+               purchase_order_number, sales_representative,
                subtotal_amount, tax_amount, total_amount,
                source_authority, source_values, created_by, created_at, updated_at
              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                       ?, ?, ?, ?)`,
+                       ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(
             entityId,
@@ -257,6 +259,11 @@ export async function POST(
             positiveInteger(values.version_number, 1),
             text(values.status) || "issued",
             text(values.currency) || "DOP",
+            date(values.due_date),
+            original(raw.due_date, values.due_date),
+            text(values.payment_terms_raw),
+            text(values.purchase_order_number),
+            text(values.sales_representative),
             amount(values.subtotal_amount),
             amount(values.tax_amount),
             amount(values.total_amount),
@@ -300,9 +307,10 @@ export async function POST(
             .prepare(
               `INSERT INTO invoice_lines (
                  id, invoice_id, line_number, item_code, description,
-                 quantity, unit_of_measure, unit_price, tax_amount, line_total,
+                 location, quantity, width_cm, height_cm, area_sqm,
+                 unit_of_measure, unit_price, tax_amount, line_total,
                  source_sheet, source_range, source_values, value_states
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}')`,
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}')`,
             )
             .bind(
               `${entityId}-line-${index + 1}`,
@@ -310,7 +318,11 @@ export async function POST(
               index + 1,
               text(line.item_code),
               text(line.description),
+              text(line.location),
               amount(line.quantity),
+              amount(line.width_cm),
+              amount(line.height_cm),
+              amount(line.area_sqm),
               text(line.unit_of_measure),
               amount(line.unit_price),
               amount(line.tax_amount),

@@ -1,6 +1,7 @@
 import { getD1 } from "../../../../db";
 import { authorizeApi } from "../../../lib/authorization";
 import { cleanText } from "../../../lib/crm";
+import { calculateDocument } from "../../../lib/document-calculations";
 import { quotationIdentity } from "../../../lib/source-domain";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -31,7 +32,7 @@ async function optionalAll<T extends Record<string, unknown>>(
 }
 
 export async function GET(request: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "cotizaciones", action: "view" });
   if (!auth.ok) return auth.response;
   const { id } = await context.params;
   const requestedRevisionId = cleanText(
@@ -326,11 +327,8 @@ export async function GET(request: Request, context: RouteContext) {
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
-  const auth = await authorizeApi();
+  const auth = await authorizeApi({ module: "cotizaciones", action: "edit" });
   if (!auth.ok) return auth.response;
-  if (auth.user.role === "viewer") {
-    return Response.json({ error: "Acceso de solo lectura." }, { status: 403 });
-  }
   const { id } = await context.params;
   const payload = (await request.json()) as Record<string, unknown>;
   const current = await getD1()
@@ -359,7 +357,10 @@ export async function PATCH(request: Request, context: RouteContext) {
   const businessId = cleanText(payload.businessId ?? current.business_id, 80);
   if (!quotationNumber || !businessId) {
     return Response.json(
-      { error: "Número de cotización y cliente son obligatorios." },
+      {
+        error: "Número de cotización y cliente son obligatorios.",
+        field: !businessId ? "businessId" : "quotationNumber",
+      },
       { status: 400 },
     );
   }
@@ -368,7 +369,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     .bind(businessId)
     .first<{ id: string }>();
   if (!business) {
-    return Response.json({ error: "El cliente no existe." }, { status: 400 });
+    return Response.json({ error: "El cliente no existe.", field: "businessId" }, { status: 400 });
   }
   const primaryContactId = cleanText(payload.primaryContactId, 80) || null;
   if (primaryContactId) {
@@ -380,7 +381,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       .first<{ id: string }>();
     if (!contact) {
       return Response.json(
-        { error: "El contacto no pertenece al cliente seleccionado." },
+        { error: "El contacto no pertenece al cliente seleccionado.", field: "primaryContactId" },
         { status: 400 },
       );
     }
@@ -395,7 +396,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       .first<{ id: string }>();
     if (!project) {
       return Response.json(
-        { error: "El proyecto no pertenece al cliente seleccionado." },
+        { error: "El proyecto no pertenece al cliente seleccionado.", field: "projectId" },
         { status: 400 },
       );
     }
@@ -423,7 +424,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   );
   if (!allowedStatuses.has(status) || !allowedTypes.has(quotationType)) {
     return Response.json(
-      { error: "Estado o tipo de cotización no válido." },
+      { error: "Estado o tipo de cotización no válido.", field: !allowedStatuses.has(status) ? "status" : "quotationType" },
       { status: 400 },
     );
   }
@@ -440,6 +441,25 @@ export async function PATCH(request: Request, context: RouteContext) {
       : null;
   const revisionId = cleanText(payload.revisionId ?? current.revision_id, 80);
   const now = new Date().toISOString();
+  const replacementLines = Array.isArray(payload.lines)
+    ? normalizeEditableLines(payload.lines)
+    : null;
+  const currentCurrency = cleanText(
+    payload.currency ?? current.currency,
+    8,
+  ).toUpperCase() || "DOP";
+  const calculated = replacementLines
+    ? calculateDocument({
+        lines: replacementLines,
+        discount: payload.discountAmount,
+        additionalCharge: payload.additionalChargeAmount,
+        taxRate: payload.taxRate,
+        advance: payload.paidAmountSnapshot,
+      })
+    : null;
+  if (calculated?.errors.length) {
+    return Response.json({ error: calculated.errors[0], field: "lines" }, { status: 400 });
+  }
   const statements = [
     getD1()
       .prepare(
@@ -463,7 +483,7 @@ export async function PATCH(request: Request, context: RouteContext) {
         quotationType,
         cleanText(payload.serviceCategory, 120),
         status,
-        cleanText(payload.currency, 8),
+        currentCurrency,
         now,
         id,
       ),
@@ -520,6 +540,127 @@ export async function PATCH(request: Request, context: RouteContext) {
         ),
     );
   }
+  if (revisionId && calculated && replacementLines) {
+    statements.push(
+      getD1()
+        .prepare("DELETE FROM quotation_line_items WHERE revision_id = ?")
+        .bind(revisionId),
+      getD1()
+        .prepare(
+          `INSERT INTO quotation_financials (
+            id, revision_id, currency, calculated_subtotal, discount_amount,
+            source_tax_rate, calculated_tax_amount, calculated_total, amount_paid,
+            remaining_balance, payment_status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(revision_id) DO UPDATE SET
+            currency = excluded.currency,
+            calculated_subtotal = excluded.calculated_subtotal,
+            discount_amount = excluded.discount_amount,
+            source_tax_rate = excluded.source_tax_rate,
+            calculated_tax_amount = excluded.calculated_tax_amount,
+            calculated_total = excluded.calculated_total,
+            amount_paid = excluded.amount_paid,
+            remaining_balance = excluded.remaining_balance,
+            payment_status = excluded.payment_status,
+            updated_at = excluded.updated_at`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          revisionId,
+          currentCurrency,
+          calculated.subtotal,
+          calculated.discount,
+          calculated.taxRate,
+          calculated.taxAmount,
+          calculated.total,
+          calculated.advance,
+          calculated.balance,
+          quotationPaymentStatus(calculated.advance, calculated.total),
+          now,
+          now,
+        ),
+    );
+    for (const [index, line] of replacementLines.entries()) {
+      const calculatedLine = calculated.lines[index];
+      statements.push(
+        getD1()
+          .prepare(
+            `INSERT INTO quotation_line_items (
+              id, revision_id, sort_order, description, location, quantity,
+              unit_of_measure, finished_width_cm, finished_height_cm, area_sqm,
+              price_basis, unit_price, price_per_sqm, calculated_line_total,
+              currency, value_states, source_values, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, '{}', '{}', ?, ?)`,
+          )
+          .bind(
+            crypto.randomUUID(),
+            revisionId,
+            index,
+            cleanText(line.description, 1000),
+            cleanText(line.location, 300),
+            calculatedLine.quantity,
+            calculatedLine.widthCm,
+            calculatedLine.heightCm,
+            calculatedLine.areaTotal,
+            calculatedLine.areaPerUnit === null ? "unit" : "square_meter",
+            calculatedLine.unitPrice,
+            calculatedLine.areaPerUnit === null ? null : calculatedLine.unitPrice,
+            calculatedLine.lineTotal,
+            currentCurrency,
+            now,
+            now,
+          ),
+      );
+    }
+    statements.push(
+      getD1()
+        .prepare("DELETE FROM quotation_charges WHERE revision_id = ? AND type = 'other'")
+        .bind(revisionId),
+    );
+    const chargeAmount = Math.max(0, Number(payload.additionalChargeAmount) || 0);
+    if (chargeAmount > 0) {
+      statements.push(
+        getD1()
+          .prepare(
+            `INSERT INTO quotation_charges (
+              id, revision_id, type, label, calculated_amount, currency,
+              value_state, sort_order
+            ) VALUES (?, ?, 'other', ?, ?, ?, 'value', 0)`,
+          )
+          .bind(
+            crypto.randomUUID(),
+            revisionId,
+            cleanText(payload.additionalChargeLabel, 120) || "Cargo adicional",
+            chargeAmount,
+            currentCurrency,
+          ),
+      );
+    }
+    const terms = payload.terms && typeof payload.terms === "object"
+      ? payload.terms as Record<string, unknown>
+      : {};
+    statements.push(
+      getD1()
+        .prepare(
+          `INSERT INTO quotation_terms (
+            id, revision_id, quotation_validity, payment_conditions,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(revision_id) DO UPDATE SET
+            quotation_validity = excluded.quotation_validity,
+            payment_conditions = excluded.payment_conditions,
+            updated_at = excluded.updated_at`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          revisionId,
+          cleanText(payload.validityUntil, 20),
+          cleanText(payload.paymentConditions ?? payload.paymentTermsRaw ?? terms.paymentConditions, 2000),
+          now,
+          now,
+        ),
+    );
+  }
   statements.push(
     getD1()
       .prepare(
@@ -552,4 +693,28 @@ export async function PATCH(request: Request, context: RouteContext) {
   );
   await getD1().batch(statements);
   return Response.json({ ok: true, quotationId: id, revisionId });
+}
+
+function normalizeEditableLines(value: unknown[]) {
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const line = entry as Record<string, unknown>;
+    const description = cleanText(line.description, 1000);
+    return description
+      ? [{
+          id: cleanText(line.id, 80) || crypto.randomUUID(),
+          description,
+          quantity: line.quantity,
+          widthCm: line.widthCm,
+          heightCm: line.heightCm,
+          unitPrice: line.unitPrice,
+          location: line.location,
+        }]
+      : [];
+  });
+}
+
+function quotationPaymentStatus(advance: number, total: number) {
+  if (advance <= 0) return "unpaid";
+  return advance >= total ? "paid" : "partial";
 }

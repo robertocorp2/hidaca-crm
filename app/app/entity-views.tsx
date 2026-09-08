@@ -1,49 +1,40 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import type { ActivityRow, BusinessRow, ContactRow } from "./types";
+import { RecordWorkspace } from "./record-workspace";
 import {
+  ActiveFilterChip,
+  AutocompleteInput,
   Breadcrumbs,
-  DocumentRow,
-  EmptyState,
-  ErrorState,
+  ColumnFilterPopover,
+  Empty,
   InlineAlert,
-  LoadingState,
   Modal,
-  OverflowMenu,
-  PageHeader,
   Pagination,
-  RecordActions,
-  RecordField,
-  RecordHeader,
-  RelatedListItem,
-  RelatedTabs,
-  SectionCard,
+  PageSizeControl,
+  PageHeader,
+  SortHeader,
   dateTime,
-  money,
   useFormGuard,
+  useColumnFilters,
   usePagination,
   useUrlState,
 } from "./ui";
 
-function initials(value: string) {
-  return value
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("") || "—";
-}
-
-function hrefFor(value: string, scheme: "mailto" | "tel") {
-  return value ? `${scheme}:${value.replace(/\s+/g, "")}` : undefined;
-}
-
 type SharedProps = {
   canWrite: boolean;
+  canViewActivity: boolean;
+  canCreateActivity: boolean;
+  canAskAi: boolean;
+  canProposeAi: boolean;
+  canApproveAi: boolean;
   currentUserEmail: string;
   activities: ActivityRow[];
   onOpenActivity(id: string): void;
+  onCreateActivity(relatedType: "business" | "contact", relatedId: string): void;
+  onNavigate(view: string, id: string): void;
+  confirm(message: string, confirmLabel: string, action: () => Promise<void>): void;
   setMessage(message: string): void;
 };
 
@@ -61,27 +52,49 @@ export function BusinessesView({
 }) {
   const [search, setSearch] = useUrlState("q");
   const [sort, setSort] = useUrlState("sort", "name");
+  const [direction, setDirection] = useUrlState("dir", "asc");
+  const [pageSizeValue, setPageSizeValue] = useUrlState("pageSize", "10");
   const [editing, setEditing] = useState<BusinessRow | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
   const [duplicateWarning, setDuplicateWarning] = useState(false);
   const selected = businesses.find((item) => item.id === selectedId) ?? null;
-  const rows = useMemo(() => {
+  const searchedRows = useMemo(() => {
     const term = search.trim().toLowerCase();
     return businesses
       .filter((business) =>
         `${business.name} ${business.rnc} ${business.email} ${business.phone} ${business.mobilePhone} ${business.address}`
           .toLowerCase()
           .includes(term),
-      )
-      .toSorted((left, right) =>
-        sort === "recent"
-          ? right.updatedAt.localeCompare(left.updatedAt)
-          : left.name.localeCompare(right.name),
       );
-  }, [businesses, search, sort]);
-  const { page, pageItems, setPage, totalPages } = usePagination(rows);
+  }, [businesses, search]);
+  const businessFilterDefinitions = useMemo(() => [
+    { key: "name", label: "Empresa", getValue: (business: BusinessRow) => business.name },
+    { key: "email", label: "Correo", getValue: (business: BusinessRow) => business.email },
+    { key: "phone", label: "Teléfono", getValue: (business: BusinessRow) => business.phone },
+    { key: "owner", label: "Responsable", getValue: (business: BusinessRow) => business.ownerEmail },
+    { key: "updated", label: "Actualización", kind: "date" as const, getValue: (business: BusinessRow) => business.updatedAt },
+  ], []);
+  const { filtered: filteredBusinesses, values: businessFilterValues, setFilter: setBusinessFilter, active: activeBusinessFilters, clear: clearBusinessFilters } = useColumnFilters("businesses", searchedRows, businessFilterDefinitions);
+  const rows = useMemo(() => {
+    const multiplier = direction === "desc" ? -1 : 1;
+    return filteredBusinesses.toSorted((left, right) => {
+      const leftValue = sort === "email" ? left.email : sort === "owner" ? left.ownerEmail : sort === "updated" ? left.updatedAt : left.name;
+      const rightValue = sort === "email" ? right.email : sort === "owner" ? right.ownerEmail : sort === "updated" ? right.updatedAt : right.name;
+      return multiplier * leftValue.localeCompare(rightValue, "es", { sensitivity: "base" });
+    });
+  }, [direction, filteredBusinesses, sort]);
+  const pageSize = pageSizeValue === "all" ? Math.max(rows.length, 1) : Number(pageSizeValue) || 10;
+  const { page, pageItems, setPage, totalPages } = usePagination(rows, pageSize);
+
+  function sortBy(column: string) {
+    if (sort === column) setDirection(direction === "asc" ? "desc" : "asc");
+    else {
+      setSort(column);
+      setDirection("asc");
+    }
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -124,27 +137,7 @@ export function BusinessesView({
     shared.setMessage("Empresa guardada.");
   }
 
-  async function archiveSelected() {
-    if (!selected || !window.confirm(`¿Archivar la empresa “${selected.name}”?`)) return;
-    const response = await fetch(`/api/businesses/${encodeURIComponent(selected.id)}`, {
-      method: "DELETE",
-    });
-    const result = (await response.json()) as { error?: string };
-    if (!response.ok) {
-      shared.setMessage(result.error ?? "No se pudo archivar la empresa.");
-      return;
-    }
-    setBusinesses(businesses.filter((item) => item.id !== selected.id));
-    setSelectedId(null);
-    shared.setMessage("Empresa archivada.");
-  }
-
   if (selected) {
-    const related = shared.activities.filter(
-      (activity) =>
-        activity.relatedType === "business" &&
-        activity.relatedId === selected.id,
-    );
     return (
       <>
         <Breadcrumbs
@@ -154,75 +147,31 @@ export function BusinessesView({
             { label: selected.name },
           ]}
         />
-        <RecordHeader
-          avatar={initials(selected.name)}
-          eyebrow="Empresa"
-          subtitle={selected.email || selected.phone || "Ficha comercial"}
-          title={selected.name}
-          actions={
-            <RecordActions>
-              {shared.canWrite && (
-                <button
-                  className="primary-button"
-                  onClick={() => {
-                    setEditing(selected);
-                    setFormError("");
-                    setShowForm(true);
-                  }}
-                  type="button"
-                >
-                  Editar empresa
-                </button>
-              )}
-              <OverflowMenu
-                items={[
-                  {
-                    danger: true,
-                    label: "Archivar empresa",
-                    onSelect: () => void archiveSelected(),
-                    disabled: !shared.canWrite,
-                  },
-                ]}
-              />
-            </RecordActions>
-          }
+        <RecordWorkspace
+          activities={shared.activities}
+          businesses={businesses}
+          canCreateActivity={shared.canCreateActivity}
+          canAskAi={shared.canAskAi}
+          canProposeAi={shared.canProposeAi}
+          canApproveAi={shared.canApproveAi}
+          canViewActivity={shared.canViewActivity}
+          canWrite={shared.canWrite}
+          kind="business"
+          onArchived={() => setSelectedId(null)}
+          onEdit={() => {
+            setEditing(selected);
+            setFormError("");
+            setShowForm(true);
+          }}
+          onNavigate={shared.onNavigate}
+          onOpenActivity={shared.onOpenActivity}
+          onCreateActivity={shared.onCreateActivity}
+          confirm={shared.confirm}
+          record={selected}
+          setMessage={shared.setMessage}
         />
-        <div className="detail-grid">
-          <SectionCard title="Información de la empresa" description="Datos de identidad, contacto y responsabilidad.">
-            <dl className="record-fields">
-              <RecordField label="Nombre" value={selected.name} />
-              <RecordField label="Tipo" value={selected.customerType === "individual" ? "Persona" : "Organización"} />
-              <RecordField label="RNC o cédula" value={selected.rnc} />
-              <RecordField label="Correo" href={hrefFor(selected.email, "mailto")} value={selected.email} />
-              <RecordField label="Teléfono" href={hrefFor(selected.phone, "tel")} value={selected.phone} />
-              <RecordField label="Celular" href={hrefFor(selected.mobilePhone, "tel")} value={selected.mobilePhone} />
-              <RecordField label="Dirección" value={selected.address} />
-              <RecordField label="Responsable" value={selected.ownerEmail} />
-              <RecordField label="Actualizado" value={dateTime(selected.updatedAt)} />
-            </dl>
-            {selected.notes && <p className="detail-notes">{selected.notes}</p>}
-          </SectionCard>
-          <SectionCard title="Actividad" description="Seguimiento registrado en el CRM.">
-            {related.length ? (
-              <ul className="activity-mini-list">
-                {related.map((activity) => (
-                  <li key={activity.id}>
-                    <button onClick={() => shared.onOpenActivity(activity.id)} type="button">
-                      <strong>{activity.title}</strong>
-                      <span>{dateTime(activity.startAt, true)}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <EmptyState title="Sin actividad" description="Todavía no hay actividades relacionadas con esta empresa." />
-            )}
-          </SectionCard>
-        </div>
-        <BusinessRelatedSections businessId={selected.id} />
         {showForm && (
           <Modal
-            description="Completa los datos comerciales y guarda para actualizar la ficha."
             onClose={() => setShowForm(false)}
             title={editing ? "Editar empresa" : "Nueva empresa"}
             wide
@@ -246,47 +195,41 @@ export function BusinessesView({
     <>
       <Breadcrumbs items={[{ label: "Inicio" }, { label: "Empresas" }]} />
       <PageHeader
+        action={shared.canWrite ? (
+          <button
+            className="primary-button"
+            onClick={() => {
+              setEditing(null);
+              setFormError("");
+              setShowForm(true);
+            }}
+            type="button"
+          >
+            Nueva empresa
+          </button>
+        ) : undefined}
         description="Organizaciones y clientes comerciales."
         eyebrow="CRM"
         title="Empresas"
-        actions={
-          shared.canWrite && (
-            <button
-              className="primary-button"
-              onClick={() => {
-                setEditing(null);
-                setFormError("");
-                setShowForm(true);
-              }}
-              type="button"
-            >
-              Nueva empresa
-            </button>
-          )
-        }
       />
       <div className="toolbar toolbar-filters">
-        <input
-          aria-label="Buscar empresas"
-          autoComplete="off"
-          name="q"
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Buscar por empresa, correo o teléfono…"
+        <AutocompleteInput
+          ariaLabel="Buscar empresas"
+          onChange={setSearch}
+          onSelect={(option) => setSearch(option.label)}
+          options={rows.slice(0, 8).map((business) => ({ id: business.id, label: business.name, secondary: business.address }))}
+          placeholder="Escribe una letra o nombre…"
           value={search}
         />
-        <select
-          aria-label="Ordenar empresas"
-          onChange={(event) => setSort(event.target.value)}
-          value={sort}
-        >
-          <option value="name">Nombre de la empresa</option>
-          <option value="recent">Actualizados recientemente</option>
-        </select>
+        <PageSizeControl label="Empresas por página" onChange={(value) => { setPageSizeValue(value); setPage(1); }} value={pageSizeValue} />
         <span>{rows.length} empresas</span>
       </div>
+      {activeBusinessFilters.length > 0 && <div className="list-filter-summary" aria-label="Filtros activos">
+        {activeBusinessFilters.map(([key, value]) => <ActiveFilterChip key={key} label={`${businessFilterDefinitions.find((definition) => definition.key === key)?.label ?? key}: ${value}`} onClear={() => setBusinessFilter(key, "")} />)}
+        <button className="text-button" onClick={clearBusinessFilters} type="button">Limpiar filtros</button>
+      </div>}
       {showForm && (
         <Modal
-          description="Completa los datos comerciales y guarda para crear la ficha."
           onClose={() => setShowForm(false)}
           title={editing ? "Editar empresa" : "Nueva empresa"}
           wide
@@ -302,17 +245,17 @@ export function BusinessesView({
           />
         </Modal>
       )}
-      <section className="panel">
+      <section className="panel list-view-panel">
         {rows.length ? (
           <div className="table-wrap">
             <table className="responsive-table">
               <thead>
                 <tr>
-                  <th>Empresa</th>
-                  <th>Correo</th>
-                  <th>Teléfono</th>
-                  <th>Responsable</th>
-                  <th>Actualización</th>
+                  <th><span className="table-header-with-filter"><SortHeader column="name" direction={direction as "asc" | "desc"} label="Empresa" onSort={sortBy} sort={sort} /><ColumnFilterPopover definition={businessFilterDefinitions[0]} value={businessFilterValues.name ?? ""} onChange={(value) => setBusinessFilter("name", value)} /></span></th>
+                  <th><span className="table-header-with-filter"><SortHeader column="email" direction={direction as "asc" | "desc"} label="Correo" onSort={sortBy} sort={sort} /><ColumnFilterPopover definition={businessFilterDefinitions[1]} value={businessFilterValues.email ?? ""} onChange={(value) => setBusinessFilter("email", value)} /></span></th>
+                  <th><span className="table-header-with-filter"><span>Teléfono</span><ColumnFilterPopover definition={businessFilterDefinitions[2]} value={businessFilterValues.phone ?? ""} onChange={(value) => setBusinessFilter("phone", value)} /></span></th>
+                  <th><span className="table-header-with-filter"><SortHeader column="owner" direction={direction as "asc" | "desc"} label="Responsable" onSort={sortBy} sort={sort} /><ColumnFilterPopover definition={businessFilterDefinitions[3]} value={businessFilterValues.owner ?? ""} onChange={(value) => setBusinessFilter("owner", value)} /></span></th>
+                  <th><span className="table-header-with-filter"><SortHeader column="updated" direction={direction as "asc" | "desc"} label="Actualización" onSort={sortBy} sort={sort} /><ColumnFilterPopover definition={businessFilterDefinitions[4]} value={businessFilterValues.updated ?? ""} onChange={(value) => setBusinessFilter("updated", value)} /></span></th>
                 </tr>
               </thead>
               <tbody>
@@ -343,9 +286,7 @@ export function BusinessesView({
             </table>
           </div>
         ) : (
-          <EmptyState
-            description="No hay empresas en esta vista."
-            title="Sin empresas"
+          <Empty
             action={
               shared.canWrite ? (
                 <button
@@ -361,6 +302,7 @@ export function BusinessesView({
                 </button>
               ) : undefined
             }
+            text="No hay empresas en esta vista."
           />
         )}
         <Pagination
@@ -370,103 +312,6 @@ export function BusinessesView({
         />
       </section>
     </>
-  );
-}
-
-function BusinessRelatedSections({ businessId }: { businessId: string }) {
-  const [data, setData] = useState<Record<
-    string,
-    Array<Record<string, unknown>>
-  > | null>(null);
-  const [error, setError] = useState("");
-  const [reload, setReload] = useState(0);
-  const [active, setActive] = useState("contacts");
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch(`/api/businesses/${encodeURIComponent(businessId)}`, {
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const result = (await response.json()) as Record<string, unknown> & {
-          error?: string;
-        };
-        if (!response.ok)
-          throw new Error(
-            result.error ?? "No se pudieron cargar las relaciones.",
-          );
-        setData({
-          contacts: (result.contacts as Array<Record<string, unknown>>) ?? [],
-          addresses: (result.addresses as Array<Record<string, unknown>>) ?? [],
-          projects: (result.projects as Array<Record<string, unknown>>) ?? [],
-          opportunities:
-            (result.opportunities as Array<Record<string, unknown>>) ?? [],
-          invoices: (result.invoices as Array<Record<string, unknown>>) ?? [],
-          quotations:
-            (result.quotations as Array<Record<string, unknown>>) ?? [],
-          payments: (result.payments as Array<Record<string, unknown>>) ?? [],
-          documents: (result.documents as Array<Record<string, unknown>>) ?? [],
-          history: (result.history as Array<Record<string, unknown>>) ?? [],
-        });
-      })
-      .catch((reason) => {
-        if ((reason as Error).name !== "AbortError")
-          setError((reason as Error).message);
-      });
-    return () => controller.abort();
-  }, [businessId, reload]);
-  if (error) return <ErrorState message={error} onRetry={() => { setError(""); setReload((value) => value + 1); }} />;
-  if (!data) return <LoadingState text="Cargando relaciones de la empresa…" />;
-  const items = [
-    { key: "contacts", label: "Contactos", count: data.contacts.length },
-    { key: "projects", label: "Proyectos", count: data.projects.length },
-    { key: "opportunities", label: "Oportunidades", count: data.opportunities.length },
-    { key: "invoices", label: "Facturas", count: data.invoices.length },
-    { key: "quotations", label: "Cotizaciones", count: data.quotations.length },
-    { key: "addresses", label: "Direcciones", count: data.addresses.length },
-    { key: "payments", label: "Pagos", count: data.payments.length },
-    { key: "documents", label: "Documentos", count: data.documents.length },
-    { key: "history", label: "Historial", count: data.history.length },
-  ];
-  const renderRows = () => {
-    if (active === "documents") {
-      return data.documents.length ? (
-        <div className="document-list">
-          {data.documents.slice(0, 12).map((item, index) => (
-            <DocumentRow
-              contentType={String(item.contentType || "")}
-              href={`/api/documents/${encodeURIComponent(String(item.id))}`}
-              key={String(item.id ?? index)}
-              name={String(item.name || "Documento")}
-              size={typeof item.size === "number" ? item.size : undefined}
-            />
-          ))}
-        </div>
-      ) : <EmptyState title="Sin documentos" description="No hay documentos asociados a esta empresa." />;
-    }
-    const rows = data[active as keyof typeof data] as Array<Record<string, unknown>>;
-    if (!rows?.length) return <EmptyState title="Sin registros" description="No hay información relacionada para mostrar." />;
-    const render = active === "contacts"
-      ? (item: Record<string, unknown>) => `${item.name}${item.email ? ` · ${item.email}` : ""}`
-      : active === "projects"
-        ? (item: Record<string, unknown>) => `${item.name} · ${item.status}`
-        : active === "opportunities"
-          ? (item: Record<string, unknown>) => `${item.title} · ${item.stage}`
-          : active === "invoices"
-            ? (item: Record<string, unknown>) => `${item.invoiceNumber || "Factura"} · ${item.status || ""}`
-            : active === "quotations"
-              ? (item: Record<string, unknown>) => `${item.quotationNumber} · ${item.title}`
-              : active === "history"
-                ? (item: Record<string, unknown>) => `${item.action} · ${dateTime(String(item.createdAt))}`
-                : active === "payments"
-                  ? (item: Record<string, unknown>) => `${item.label || item.type} · ${typeof item.amount === "number" ? money(item.amount, String(item.currency || "DOP")) : "—"}`
-                  : (item: Record<string, unknown>) => `${item.label || item.type}: ${item.line1 || ""}`;
-    return <ul className="related-list">{rows.slice(0, 12).map((item, index) => <RelatedListItem key={String(item.id ?? index)} title={render(item)} />)}</ul>;
-  };
-  return (
-    <SectionCard title="Información relacionada" description="Relaciones existentes en el sistema.">
-      <RelatedTabs active={active} items={items} onChange={setActive} />
-      <div className="related-tab-panel">{renderRows()}</div>
-    </SectionCard>
   );
 }
 
@@ -497,7 +342,11 @@ function BusinessForm({
           guardar para conservar ambos registros.
         </p>
       )}
-      <div className="form-grid">
+      <div className="form-section-heading">
+        <strong>Información principal</strong>
+        <span>Completa los datos que ya existan para este registro.</span>
+      </div>
+      <div className="form-grid record-form-grid">
         <label className="wide">
           Nombre de la empresa
           <input
@@ -607,22 +456,49 @@ export function ContactsView({
 }) {
   const [search, setSearch] = useUrlState("q");
   const [businessFilter, setBusinessFilter] = useUrlState("business");
+  const [sort, setSort] = useUrlState("sort", "name");
+  const [direction, setDirection] = useUrlState("dir", "asc");
+  const [pageSizeValue, setPageSizeValue] = useUrlState("pageSize", "10");
+  const [businessQuery, setBusinessQuery] = useState("");
   const [editing, setEditing] = useState<ContactRow | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
   const [duplicateWarning, setDuplicateWarning] = useState(false);
   const selected = contacts.find((item) => item.id === selectedId) ?? null;
-  const rows = contacts
+  const searchedRows = contacts
     .filter(
       (contact) =>
-        (!businessFilter || contact.businessId === businessFilter) &&
+        (!businessFilter && !businessQuery.trim() || contact.businessId === businessFilter || (businesses.find((item) => item.id === contact.businessId)?.name ?? "").toLowerCase().includes(businessQuery.trim().toLowerCase())) &&
         `${contact.name} ${contact.email} ${contact.phone} ${contact.mobilePhone} ${contact.title}`
           .toLowerCase()
           .includes(search.toLowerCase().trim()),
-    )
-    .toSorted((left, right) => left.name.localeCompare(right.name));
-  const { page, pageItems, setPage, totalPages } = usePagination(rows);
+    );
+  const contactFilterDefinitions = useMemo(() => [
+    { key: "name", label: "Contacto", getValue: (contact: ContactRow) => contact.name },
+    { key: "email", label: "Correo", getValue: (contact: ContactRow) => contact.email },
+    { key: "phone", label: "Teléfono", getValue: (contact: ContactRow) => contact.phone },
+    { key: "owner", label: "Responsable", getValue: (contact: ContactRow) => contact.ownerEmail },
+  ], []);
+  const { filtered: filteredContacts, values: contactFilterValues, setFilter: setContactFilter, active: activeContactFilters, clear: clearContactFilters } = useColumnFilters("contacts", searchedRows, contactFilterDefinitions);
+  const rows = filteredContacts
+    .toSorted((left, right) => {
+      const leftValue = sort === "business" ? (businesses.find((item) => item.id === left.businessId)?.name ?? "") : sort === "email" ? left.email : sort === "owner" ? left.ownerEmail : left.name;
+      const rightValue = sort === "business" ? (businesses.find((item) => item.id === right.businessId)?.name ?? "") : sort === "email" ? right.email : sort === "owner" ? right.ownerEmail : right.name;
+      const multiplier = direction === "desc" ? -1 : 1;
+      return multiplier * leftValue.localeCompare(rightValue, "es", { sensitivity: "base" });
+    });
+  const pageSize = pageSizeValue === "all" ? Math.max(rows.length, 1) : Number(pageSizeValue) || 10;
+  const { page, pageItems, setPage, totalPages } = usePagination(rows, pageSize);
+  const selectedBusiness = businesses.find((item) => item.id === businessFilter);
+
+  function sortBy(column: string) {
+    if (sort === column) setDirection(direction === "asc" ? "desc" : "asc");
+    else {
+      setSort(column);
+      setDirection("asc");
+    }
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -666,28 +542,7 @@ export function ContactsView({
     shared.setMessage("Contacto guardado.");
   }
 
-  async function archiveSelected() {
-    if (!selected || !window.confirm(`¿Archivar el contacto “${selected.name}”?`)) return;
-    const response = await fetch(`/api/contacts/${encodeURIComponent(selected.id)}`, {
-      method: "DELETE",
-    });
-    const result = (await response.json()) as { error?: string };
-    if (!response.ok) {
-      shared.setMessage(result.error ?? "No se pudo archivar el contacto.");
-      return;
-    }
-    setContacts(contacts.filter((item) => item.id !== selected.id));
-    setSelectedId(null);
-    shared.setMessage("Contacto archivado.");
-  }
-
   if (selected) {
-    const business = businesses.find((item) => item.id === selected.businessId);
-    const related = shared.activities.filter(
-      (activity) =>
-        activity.relatedType === "contact" &&
-        activity.relatedId === selected.id,
-    );
     return (
       <>
         <Breadcrumbs
@@ -697,75 +552,31 @@ export function ContactsView({
             { label: selected.name },
           ]}
         />
-        <RecordHeader
-          avatar={initials(selected.name)}
-          eyebrow="Contacto"
-          subtitle={selected.title || business?.name || "Ficha de contacto"}
-          title={selected.name}
-          actions={
-            <RecordActions>
-              {shared.canWrite && (
-                <button
-                  className="primary-button"
-                  onClick={() => {
-                    setEditing(selected);
-                    setFormError("");
-                    setShowForm(true);
-                  }}
-                  type="button"
-                >
-                  Editar contacto
-                </button>
-              )}
-              <OverflowMenu
-                items={[{
-                  danger: true,
-                  label: "Archivar contacto",
-                  onSelect: () => void archiveSelected(),
-                  disabled: !shared.canWrite,
-                }]}
-              />
-            </RecordActions>
-          }
+        <RecordWorkspace
+          activities={shared.activities}
+          businesses={businesses}
+          canCreateActivity={shared.canCreateActivity}
+          canAskAi={shared.canAskAi}
+          canProposeAi={shared.canProposeAi}
+          canApproveAi={shared.canApproveAi}
+          canViewActivity={shared.canViewActivity}
+          canWrite={shared.canWrite}
+          kind="contact"
+          onArchived={() => setSelectedId(null)}
+          onEdit={() => {
+            setEditing(selected);
+            setFormError("");
+            setShowForm(true);
+          }}
+          onNavigate={shared.onNavigate}
+          onOpenActivity={shared.onOpenActivity}
+          onCreateActivity={shared.onCreateActivity}
+          confirm={shared.confirm}
+          record={selected}
+          setMessage={shared.setMessage}
         />
-        <div className="detail-grid">
-          <SectionCard title="Información del contacto" description="Datos personales, empresa y responsabilidad.">
-            <dl className="record-fields">
-              <RecordField label="Nombre" value={selected.name} />
-              <RecordField
-                label="Empresa"
-                href={business ? `/app?view=businesses&record=${encodeURIComponent(business.id)}` : undefined}
-                value={business?.name}
-              />
-              <RecordField label="Correo" href={hrefFor(selected.email, "mailto")} value={selected.email} />
-              <RecordField label="Teléfono" href={hrefFor(selected.phone, "tel")} value={selected.phone} />
-              <RecordField label="Celular" href={hrefFor(selected.mobilePhone, "tel")} value={selected.mobilePhone} />
-              <RecordField label="Responsable" value={selected.ownerEmail} />
-              <RecordField label="Actualizado" value={dateTime(selected.updatedAt)} />
-            </dl>
-            {selected.notes && <p className="detail-notes">{selected.notes}</p>}
-          </SectionCard>
-          <SectionCard title="Actividad" description="Seguimiento registrado en el CRM.">
-            {related.length ? (
-              <ul className="activity-mini-list">
-                {related.map((activity) => (
-                  <li key={activity.id}>
-                    <button onClick={() => shared.onOpenActivity(activity.id)} type="button">
-                      <strong>{activity.title}</strong>
-                      <span>{dateTime(activity.startAt, true)}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <EmptyState title="Sin actividad" description="Todavía no hay actividades relacionadas con este contacto." />
-            )}
-          </SectionCard>
-        </div>
-        <ContactRelatedSections contactId={selected.id} />
         {showForm && (
           <Modal
-            description="Completa los datos de contacto y guarda para actualizar la ficha."
             onClose={() => setShowForm(false)}
             title={editing ? "Editar contacto" : "Nuevo contacto"}
             wide
@@ -790,51 +601,49 @@ export function ContactsView({
     <>
       <Breadcrumbs items={[{ label: "Inicio" }, { label: "Contactos" }]} />
       <PageHeader
+        action={shared.canWrite ? (
+          <button
+            className="primary-button"
+            onClick={() => {
+              setEditing(null);
+              setFormError("");
+              setShowForm(true);
+            }}
+            type="button"
+          >
+            Nuevo contacto
+          </button>
+        ) : undefined}
         description="Personas relacionadas con cada empresa."
         eyebrow="CRM"
         title="Contactos"
-        actions={
-          shared.canWrite && (
-            <button
-              className="primary-button"
-              onClick={() => {
-                setEditing(null);
-                setFormError("");
-                setShowForm(true);
-              }}
-              type="button"
-            >
-              Nuevo contacto
-            </button>
-          )
-        }
       />
       <div className="toolbar toolbar-filters">
-        <input
-          aria-label="Buscar contactos"
-          autoComplete="off"
-          name="q"
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Buscar contactos…"
+        <AutocompleteInput
+          ariaLabel="Buscar contactos"
+          onChange={setSearch}
+          onSelect={(option) => setSearch(option.label)}
+          options={rows.slice(0, 8).map((contact) => ({ id: contact.id, label: contact.name, secondary: contact.title }))}
+          placeholder="Escribe una letra o nombre…"
           value={search}
         />
-        <select
-          aria-label="Filtrar contactos por empresa"
-          onChange={(event) => setBusinessFilter(event.target.value)}
-          value={businessFilter}
-        >
-          <option value="">Todas las empresas</option>
-          {businesses.map((business) => (
-            <option key={business.id} value={business.id}>
-              {business.name}
-            </option>
-          ))}
-        </select>
+        <AutocompleteInput
+          ariaLabel="Filtrar contactos por empresa"
+          onChange={(value) => { setBusinessQuery(value); setBusinessFilter(""); }}
+          onSelect={(option) => { setBusinessQuery(option.label); setBusinessFilter(option.id); }}
+          options={businesses.filter((business) => business.name.toLowerCase().includes(businessQuery.trim().toLowerCase())).slice(0, 8).map((business) => ({ id: business.id, label: business.name, secondary: business.email }))}
+          placeholder="Escribe una empresa…"
+          value={businessQuery || selectedBusiness?.name || ""}
+        />
+        <PageSizeControl label="Contactos por página" onChange={(value) => { setPageSizeValue(value); setPage(1); }} value={pageSizeValue} />
         <span>{rows.length} contactos</span>
       </div>
+      {activeContactFilters.length > 0 && <div className="list-filter-summary" aria-label="Filtros activos">
+        {activeContactFilters.map(([key, value]) => <ActiveFilterChip key={key} label={`${contactFilterDefinitions.find((definition) => definition.key === key)?.label ?? key}: ${value}`} onClear={() => setContactFilter(key, "")} />)}
+        <button className="text-button" onClick={clearContactFilters} type="button">Limpiar filtros</button>
+      </div>}
       {showForm && (
         <Modal
-          description="Completa los datos de contacto y guarda para crear la ficha."
           onClose={() => setShowForm(false)}
           title={editing ? "Editar contacto" : "Nuevo contacto"}
           wide
@@ -851,17 +660,17 @@ export function ContactsView({
           />
         </Modal>
       )}
-      <section className="panel">
+      <section className="panel list-view-panel">
         {rows.length ? (
           <div className="table-wrap">
             <table className="responsive-table">
               <thead>
                 <tr>
-                  <th>Contacto</th>
-                  <th>Empresa</th>
-                  <th>Correo</th>
-                  <th>Teléfono</th>
-                  <th>Responsable</th>
+                  <th><span className="table-header-with-filter"><SortHeader column="name" direction={direction as "asc" | "desc"} label="Contacto" onSort={sortBy} sort={sort} /><ColumnFilterPopover definition={contactFilterDefinitions[0]} value={contactFilterValues.name ?? ""} onChange={(value) => setContactFilter("name", value)} /></span></th>
+                  <th><SortHeader column="business" direction={direction as "asc" | "desc"} label="Empresa" onSort={sortBy} sort={sort} /></th>
+                  <th><span className="table-header-with-filter"><span>Correo</span><ColumnFilterPopover definition={contactFilterDefinitions[1]} value={contactFilterValues.email ?? ""} onChange={(value) => setContactFilter("email", value)} /></span></th>
+                  <th><span className="table-header-with-filter"><span>Teléfono</span><ColumnFilterPopover definition={contactFilterDefinitions[2]} value={contactFilterValues.phone ?? ""} onChange={(value) => setContactFilter("phone", value)} /></span></th>
+                  <th><span className="table-header-with-filter"><SortHeader column="owner" direction={direction as "asc" | "desc"} label="Responsable" onSort={sortBy} sort={sort} /><ColumnFilterPopover definition={contactFilterDefinitions[3]} value={contactFilterValues.owner ?? ""} onChange={(value) => setContactFilter("owner", value)} /></span></th>
                 </tr>
               </thead>
               <tbody>
@@ -895,9 +704,7 @@ export function ContactsView({
             </table>
           </div>
         ) : (
-          <EmptyState
-            description="No hay contactos en esta vista."
-            title="Sin contactos"
+          <Empty
             action={
               shared.canWrite ? (
                 <button
@@ -913,6 +720,7 @@ export function ContactsView({
                 </button>
               ) : undefined
             }
+            text="No hay contactos en esta vista."
           />
         )}
         <Pagination
@@ -922,92 +730,6 @@ export function ContactsView({
         />
       </section>
     </>
-  );
-}
-
-function ContactRelatedSections({ contactId }: { contactId: string }) {
-  const [data, setData] = useState<Record<
-    string,
-    Array<Record<string, unknown>>
-  > | null>(null);
-  const [error, setError] = useState("");
-  const [reload, setReload] = useState(0);
-  const [active, setActive] = useState("projects");
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch(`/api/contacts/${encodeURIComponent(contactId)}`, {
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const result = (await response.json()) as Record<string, unknown> & {
-          error?: string;
-        };
-        if (!response.ok) {
-          throw new Error(
-            result.error ?? "No se pudieron cargar las relaciones.",
-          );
-        }
-        setData({
-          projects: (result.projects as Array<Record<string, unknown>>) ?? [],
-          opportunities: (result.opportunities as Array<Record<string, unknown>>) ?? [],
-          quotations:
-            (result.quotations as Array<Record<string, unknown>>) ?? [],
-          invoices: (result.invoices as Array<Record<string, unknown>>) ?? [],
-          documents: (result.documents as Array<Record<string, unknown>>) ?? [],
-          history: (result.history as Array<Record<string, unknown>>) ?? [],
-        });
-      })
-      .catch((reason) => {
-        if ((reason as Error).name !== "AbortError") {
-          setError((reason as Error).message);
-        }
-      });
-    return () => controller.abort();
-  }, [contactId, reload]);
-  if (error) return <ErrorState message={error} onRetry={() => { setError(""); setReload((value) => value + 1); }} />;
-  if (!data) return <LoadingState text="Cargando relaciones del contacto…" />;
-  const items = [
-    { key: "projects", label: "Proyectos", count: data.projects.length },
-    { key: "opportunities", label: "Oportunidades", count: data.opportunities.length },
-    { key: "quotations", label: "Cotizaciones", count: data.quotations.length },
-    { key: "invoices", label: "Facturas", count: data.invoices.length },
-    { key: "documents", label: "Documentos", count: data.documents.length },
-    { key: "history", label: "Historial", count: data.history.length },
-  ];
-  const renderRows = () => {
-    if (active === "documents") {
-      return data.documents.length ? (
-        <div className="document-list">
-          {data.documents.slice(0, 12).map((item, index) => (
-            <DocumentRow
-              contentType={String(item.contentType || "")}
-              href={item.id ? `/api/documents/${encodeURIComponent(String(item.id))}` : undefined}
-              key={String(item.id ?? index)}
-              name={String(item.originalFilename || item.name || "Documento")}
-              size={typeof item.size === "number" ? item.size : undefined}
-            />
-          ))}
-        </div>
-      ) : <EmptyState title="Sin documentos" description="No hay documentos asociados a este contacto." />;
-    }
-    const rows = data[active as keyof typeof data] as Array<Record<string, unknown>>;
-    if (!rows?.length) return <EmptyState title="Sin registros" description="No hay información relacionada para mostrar." />;
-    const render = active === "projects"
-      ? (item: Record<string, unknown>) => `${item.name} · ${item.role || item.status}`
-      : active === "opportunities"
-        ? (item: Record<string, unknown>) => `${item.title} · ${item.stage}`
-        : active === "quotations"
-          ? (item: Record<string, unknown>) => `${item.quotationNumber} · ${item.status}`
-          : active === "invoices"
-            ? (item: Record<string, unknown>) => `${item.invoiceNumber || "Factura"} · ${item.status || ""}`
-            : (item: Record<string, unknown>) => `${item.action} · ${dateTime(String(item.createdAt))}`;
-    return <ul className="related-list">{rows.slice(0, 12).map((item, index) => <RelatedListItem key={String(item.id ?? index)} title={render(item)} />)}</ul>;
-  };
-  return (
-    <SectionCard title="Información relacionada" description="Relaciones existentes en el sistema.">
-      <RelatedTabs active={active} items={items} onChange={setActive} />
-      <div className="related-tab-panel">{renderRows()}</div>
-    </SectionCard>
   );
 }
 
@@ -1040,7 +762,11 @@ function ContactForm({
           guardar para conservar ambos contactos.
         </p>
       )}
-      <div className="form-grid">
+      <div className="form-section-heading">
+        <strong>Información principal</strong>
+        <span>Asocia la persona y conserva sus datos de contacto.</span>
+      </div>
+      <div className="form-grid record-form-grid">
         <label className="wide">
           Nombre del contacto
           <input

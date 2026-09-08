@@ -79,7 +79,7 @@ test("final Sites archive contains only forward migrations and metadata", async 
       "DROP TABLE addresses;",
     );
 
-    for (let index = 0; index <= 14; index += 1) {
+    for (let index = 0; index <= 15; index += 1) {
       const number = String(index).padStart(4, "0");
       await writeFile(
         path.join(root, "drizzle", `${number}_migration.sql`),
@@ -123,7 +123,7 @@ test("final Sites archive contains only forward migrations and metadata", async 
       )
       .map((entry) => entry.slice("dist/.openai/drizzle/".length))
       .sort();
-    const expectedMigrations = Array.from({ length: 15 }, (_, index) =>
+    const expectedMigrations = Array.from({ length: 16 }, (_, index) =>
       `${String(index).padStart(4, "0")}_migration.sql`,
     );
     assert.deepEqual(entries, [

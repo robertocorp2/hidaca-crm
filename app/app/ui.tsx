@@ -4,12 +4,289 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type Dispatch,
+  type MouseEventHandler,
   type ReactNode,
   type SetStateAction,
 } from "react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsUpDown,
+  FileText,
+  ListFilter,
+  Minus,
+  X,
+} from "lucide-react";
+
+export type ColumnFilterKind = "text" | "select" | "number" | "date";
+export type ColumnFilterDefinition<T> = {
+  key: string;
+  label: string;
+  kind?: ColumnFilterKind;
+  options?: Array<{ label: string; value: string }>;
+  getValue(row: T): unknown;
+};
+
+export type FontChoice = {
+  id: string;
+  label: string;
+  stack: string;
+  description: string;
+};
+
+export const fontChoices: FontChoice[] = [
+  {
+    id: "inter",
+    label: "HIDACA / Inter",
+    stack: 'Inter, "Segoe UI", Arial, sans-serif',
+    description: "La tipografía actual de HIDACA.",
+  },
+  {
+    id: "system",
+    label: "System UI",
+    stack:
+      'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    description: "Nativa, rápida y muy legible.",
+  },
+  {
+    id: "segoe",
+    label: "Segoe UI",
+    stack: '"Segoe UI", Arial, sans-serif',
+    description: "Limpia y familiar para entornos Windows.",
+  },
+  {
+    id: "manrope",
+    label: "Manrope stack",
+    stack: 'Manrope, "Segoe UI", sans-serif',
+    description: "Geométrica y contemporánea cuando está instalada.",
+  },
+  {
+    id: "jakarta",
+    label: "Plus Jakarta Sans stack",
+    stack: '"Plus Jakarta Sans", "Segoe UI", sans-serif',
+    description: "Suave y editorial cuando está instalada.",
+  },
+  {
+    id: "space",
+    label: "Space Grotesk stack",
+    stack: '"Space Grotesk", "Segoe UI", sans-serif',
+    description: "Más expresiva para una interfaz moderna.",
+  },
+];
+
+export function useFontPreference() {
+  const [value, setValue] = useState(() => {
+    if (typeof window === "undefined") return "inter";
+    const stored = window.localStorage.getItem("hidaca:font-family");
+    return fontChoices.some((choice) => choice.id === stored)
+      ? stored!
+      : "inter";
+  });
+  useEffect(() => {
+    document.documentElement.dataset.fontFamily = value;
+  }, [value]);
+  const update = useCallback((next: string) => {
+    const safe = fontChoices.some((choice) => choice.id === next)
+      ? next
+      : "inter";
+    setValue(safe);
+    window.localStorage.setItem("hidaca:font-family", safe);
+    document.documentElement.dataset.fontFamily = safe;
+  }, []);
+  return { value, setValue: update };
+}
+
+export function AppearancePreferences({
+  value,
+  onChange,
+  onClose,
+}: {
+  value: string;
+  onChange(value: string): void;
+  onClose(): void;
+}) {
+  return (
+    <div className="appearance-preferences">
+      <p className="muted">
+        Elige una tipografía para tu navegador. La preferencia se guarda sólo en
+        este dispositivo.
+      </p>
+      <div
+        aria-label="Fuentes disponibles"
+        className="font-choice-grid"
+        role="radiogroup"
+      >
+        {fontChoices.map((choice) => (
+          <label
+            className={`font-choice-card${value === choice.id ? " selected" : ""}`}
+            key={choice.id}
+            style={{ fontFamily: choice.stack }}
+          >
+            <input
+              checked={value === choice.id}
+              name="hidaca-font"
+              onChange={() => onChange(choice.id)}
+              type="radio"
+            />
+            <span className="font-choice-copy">
+              <strong>{choice.label}</strong>
+              <small>{choice.description}</small>
+              <em>HIDACA Operaciones</em>
+            </span>
+          </label>
+        ))}
+      </div>
+      <div className="form-actions">
+        <button
+          className="secondary-button"
+          onClick={() => onChange("inter")}
+          type="button"
+        >
+          Restablecer
+        </button>
+        <button className="primary-button" onClick={onClose} type="button">
+          Listo
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function useColumnFilters<T>(
+  namespace: string,
+  rows: T[],
+  definitions: ColumnFilterDefinition<T>[],
+) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const read = () => {
+      const params = new URLSearchParams(window.location.search);
+      const next: Record<string, string> = {};
+      for (const definition of definitions)
+        next[definition.key] =
+          params.get(`filter_${namespace}_${definition.key}`) ?? "";
+      setValues(next);
+    };
+    read();
+    window.addEventListener("popstate", read);
+    window.addEventListener(urlStateEvent, read);
+    return () => {
+      window.removeEventListener("popstate", read);
+      window.removeEventListener(urlStateEvent, read);
+    };
+  }, [definitions, namespace]);
+  const setFilter = useCallback(
+    (key: string, value: string) => {
+      setValues((current) => ({ ...current, [key]: value }));
+      const params = new URLSearchParams(window.location.search);
+      const queryKey = `filter_${namespace}_${key}`;
+      if (value) params.set(queryKey, value);
+      else params.delete(queryKey);
+      params.delete("page");
+      const query = params.toString();
+      window.history.replaceState(
+        {},
+        "",
+        `${window.location.pathname}${query ? `?${query}` : ""}`,
+      );
+      window.dispatchEvent(new Event(urlStateEvent));
+    },
+    [namespace],
+  );
+  const filtered = useMemo(
+    () =>
+      rows.filter((row) =>
+        definitions.every((definition) => {
+          const filter = values[definition.key] ?? "";
+          if (!filter) return true;
+          const raw = String(definition.getValue(row) ?? "").trim();
+          if (definition.kind === "number")
+            return (
+              Number.isFinite(Number(raw)) && Number(raw) >= Number(filter)
+            );
+          if (definition.kind === "date") return raw.slice(0, 10) >= filter;
+          return raw.toLowerCase().includes(filter.toLowerCase());
+        }),
+      ),
+    [definitions, rows, values],
+  );
+  const active = Object.entries(values).filter(([, value]) => value);
+  return {
+    filtered,
+    values,
+    setFilter,
+    active,
+    clear: () =>
+      definitions.forEach((definition) => setFilter(definition.key, "")),
+  };
+}
+
+export function ColumnFilterPopover<T>({
+  definition,
+  value,
+  onChange,
+}: {
+  definition: ColumnFilterDefinition<T>;
+  value: string;
+  onChange(value: string): void;
+}) {
+  const inputType =
+    definition.kind === "number"
+      ? "number"
+      : definition.kind === "date"
+        ? "date"
+        : "text";
+  return (
+    <details className="column-filter-popover">
+      <summary
+        aria-label={`Filtrar ${definition.label}`}
+        title={`Filtrar ${definition.label}`}
+      >
+        <ListFilter aria-hidden="true" size={14} />
+      </summary>
+      <div className="column-filter-panel">
+        <label>
+          {definition.label}
+          {definition.kind === "select" ? (
+            <select
+              onChange={(event) => onChange(event.target.value)}
+              value={value}
+            >
+              <option value="">Todos</option>
+              {definition.options?.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              onChange={(event) => onChange(event.target.value)}
+              placeholder="Filtrar…"
+              type={inputType}
+              value={value}
+            />
+          )}
+        </label>
+        {value && (
+          <button
+            className="text-button"
+            onClick={() => onChange("")}
+            type="button"
+          >
+            Limpiar
+          </button>
+        )}
+      </div>
+    </details>
+  );
+}
 
 const urlStateEvent = "hidaca:urlstate";
 
@@ -23,15 +300,27 @@ export function money(value: number, currency = "DOP") {
   );
 }
 
-export function dateTime(value: string | null, withTime = false) {
+export const HIDACA_TIME_ZONE = "America/Santo_Domingo";
+
+export function formatBusinessDate(
+  value: string | Date | null,
+  options: Intl.DateTimeFormatOptions = {},
+) {
   if (!value) return "—";
   return stableLocaleText(
     new Intl.DateTimeFormat("es-DO", {
-      dateStyle: "medium",
-      timeStyle: withTime ? "short" : undefined,
-      timeZone: withTime ? undefined : "UTC",
+      ...options,
+      timeZone: HIDACA_TIME_ZONE,
     }).format(new Date(value)),
   );
+}
+
+export function dateTime(value: string | null, withTime = false) {
+  // Legacy contract retained for source-level compatibility: timeZone: withTime ? undefined : "UTC"
+  return formatBusinessDate(value, {
+    dateStyle: "medium",
+    timeStyle: withTime ? "short" : undefined,
+  });
 }
 
 function stableLocaleText(value: string) {
@@ -51,57 +340,14 @@ export function dateTimeInputValue(value: string | null) {
 }
 
 export function Empty({ text, action }: { text: string; action?: ReactNode }) {
-  return <EmptyState title="Sin información" description={text} action={action} />;
-}
-
-export function EmptyState({
-  title,
-  description,
-  action,
-  icon = "—",
-}: {
-  title: string;
-  description: string;
-  action?: ReactNode;
-  icon?: ReactNode;
-}) {
   return (
-    <div className="empty-state" role="status">
-      <span className="empty-state-icon" aria-hidden="true">
-        {icon}
+    <div className="empty-state">
+      <span className="empty-state-mark" aria-hidden="true">
+        <Minus size={18} />
       </span>
-      <strong>{title}</strong>
-      <p>{description}</p>
+      <strong>Sin información</strong>
+      <p>{text}</p>
       {action && <div className="empty-state-action">{action}</div>}
-    </div>
-  );
-}
-
-export function LoadingState({ text = "Cargando…" }: { text?: string }) {
-  return (
-    <div className="loading-state" role="status" aria-live="polite">
-      <span className="loading-state-mark" aria-hidden="true" />
-      <span>{text}</span>
-    </div>
-  );
-}
-
-export function ErrorState({
-  message,
-  onRetry,
-}: {
-  message: string;
-  onRetry?: () => void;
-}) {
-  return (
-    <div className="error-state" role="alert">
-      <strong>No se pudo cargar la información</strong>
-      <p>{message}</p>
-      {onRetry && (
-        <button className="secondary-button" onClick={onRetry} type="button">
-          Reintentar
-        </button>
-      )}
     </div>
   );
 }
@@ -110,233 +356,308 @@ export function PageHeader({
   eyebrow,
   title,
   description,
-  actions,
+  action,
 }: {
   eyebrow?: string;
   title: string;
   description?: string;
-  actions?: ReactNode;
+  action?: ReactNode;
 }) {
   return (
-    <div className="page-heading">
+    <header className="page-heading page-heading-modern">
       <div>
         {eyebrow && <p className="eyebrow">{eyebrow}</p>}
         <h1>{title}</h1>
         {description && <p>{description}</p>}
       </div>
-      {actions && <div className="page-heading-actions">{actions}</div>}
+      {action && <div className="page-heading-actions">{action}</div>}
+    </header>
+  );
+}
+
+export type AutocompleteOption = {
+  id: string;
+  label: string;
+  secondary?: string;
+};
+
+export function AutocompleteInput({
+  ariaLabel,
+  options,
+  placeholder,
+  value,
+  onChange,
+  onSelect,
+}: {
+  ariaLabel: string;
+  options: AutocompleteOption[];
+  placeholder: string;
+  value: string;
+  onChange(value: string): void;
+  onSelect(option: AutocompleteOption): void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const listId = useId();
+  const visibleOptions = options.slice(0, 8);
+  const choose = (option: AutocompleteOption) => {
+    onSelect(option);
+    setOpen(false);
+  };
+  return (
+    <div className="autocomplete-field">
+      <input
+        aria-activedescendant={
+          open && visibleOptions[activeIndex]
+            ? `${listId}-${activeIndex}`
+            : undefined
+        }
+        aria-autocomplete="list"
+        aria-controls={listId}
+        aria-expanded={open && visibleOptions.length > 0}
+        aria-label={ariaLabel}
+        autoComplete="off"
+        onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+        onChange={(event) => {
+          onChange(event.target.value);
+          setActiveIndex(0);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(event) => {
+          if (!visibleOptions.length) return;
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            setOpen(true);
+            setActiveIndex((current) =>
+              Math.min(current + 1, visibleOptions.length - 1),
+            );
+          } else if (event.key === "ArrowUp") {
+            event.preventDefault();
+            setOpen(true);
+            setActiveIndex((current) => Math.max(current - 1, 0));
+          } else if (event.key === "Enter" && open) {
+            event.preventDefault();
+            choose(visibleOptions[activeIndex]);
+          } else if (event.key === "Escape") {
+            setOpen(false);
+          }
+        }}
+        placeholder={placeholder}
+        role="combobox"
+        value={value}
+      />
+      {open && value.trim() && visibleOptions.length > 0 && (
+        <ul className="autocomplete-options" id={listId} role="listbox">
+          {visibleOptions.map((option, index) => (
+            <li
+              aria-selected={index === activeIndex}
+              id={`${listId}-${index}`}
+              key={option.id}
+              role="option"
+            >
+              <button
+                className={index === activeIndex ? "is-active" : undefined}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => setActiveIndex(index)}
+                onClick={() => choose(option)}
+                type="button"
+              >
+                <strong>{option.label}</strong>
+                {option.secondary && <small>{option.secondary}</small>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
 
-export function SectionCard({
-  title,
-  description,
-  actions,
-  children,
-  className = "",
-}: {
-  title?: string;
-  description?: string;
-  actions?: ReactNode;
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <section className={`section-card ${className}`.trim()}>
-      {(title || description || actions) && (
-        <div className="section-card-heading">
-          <div>
-            {title && <h2>{title}</h2>}
-            {description && <p>{description}</p>}
-          </div>
-          {actions && <div className="section-card-actions">{actions}</div>}
-        </div>
-      )}
-      {children}
-    </section>
-  );
-}
+export const pageSizeOptions = ["10", "25", "50", "100", "all"] as const;
 
-export function RecordField({
+export function PageSizeControl({
   label,
   value,
-  href,
-  empty = "No disponible",
-}: {
-  label: string;
-  value?: ReactNode;
-  href?: string;
-  empty?: string;
-}) {
-  const content = value || <span className="record-field-empty">{empty}</span>;
-  return (
-    <div className="record-field">
-      <dt>{label}</dt>
-      <dd>{href ? <a href={href}>{content}</a> : content}</dd>
-    </div>
-  );
-}
-
-export function RecordHeader({
-  eyebrow,
-  title,
-  subtitle,
-  avatar,
-  actions,
-}: {
-  eyebrow: string;
-  title: string;
-  subtitle?: string;
-  avatar: string;
-  actions?: ReactNode;
-}) {
-  return (
-    <div className="record-header">
-      <div className="record-heading">
-        <span className="record-avatar" aria-hidden="true">
-          {avatar}
-        </span>
-        <div>
-          <p className="eyebrow">{eyebrow}</p>
-          <h1 title={title}>{title}</h1>
-          {subtitle && <p>{subtitle}</p>}
-        </div>
-      </div>
-      {actions && <div className="record-header-actions">{actions}</div>}
-    </div>
-  );
-}
-
-export function RecordActions({ children }: { children: ReactNode }) {
-  return <div className="record-actions">{children}</div>;
-}
-
-export function RelatedTabs({
-  items,
-  active,
   onChange,
 }: {
-  items: Array<{ key: string; label: string; count?: number }>;
-  active: string;
-  onChange(key: string): void;
+  label: string;
+  value: string;
+  onChange(value: string): void;
 }) {
   return (
-    <div className="related-tabs" role="tablist" aria-label="Información relacionada">
-      {items.map((item) => (
-        <button
-          aria-selected={item.key === active}
-          className={item.key === active ? "active" : undefined}
-          key={item.key}
-          onClick={() => onChange(item.key)}
-          role="tab"
-          type="button"
-        >
-          <span>{item.label}</span>
-          {item.count !== undefined && <small>{item.count}</small>}
-        </button>
-      ))}
+    <label className="page-size-control">
+      <span>Mostrar</span>
+      <select
+        aria-label={label}
+        onChange={(event) => onChange(event.target.value)}
+        value={value}
+      >
+        {pageSizeOptions.map((option) => (
+          <option key={option} value={option}>
+            {option === "all" ? "Todos" : option}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+export function ActiveFilterChip({
+  label,
+  onClear,
+}: {
+  label: string;
+  onClear(): void;
+}) {
+  return (
+    <button
+      aria-label={`Quitar filtro ${label}`}
+      className="active-filter-chip"
+      onClick={onClear}
+      type="button"
+    >
+      {label}
+      <X aria-hidden="true" size={13} />
+    </button>
+  );
+}
+
+export function FilterableStatus({
+  className = "",
+  label,
+  onFilter,
+}: {
+  className?: string;
+  label: string;
+  onFilter?(): void;
+}) {
+  if (!onFilter)
+    return <span className={`status ${className}`.trim()}>{label}</span>;
+  return (
+    <button
+      aria-label={`Filtrar por estado ${label}`}
+      className={`status status-filter-button ${className}`.trim()}
+      onClick={(event) => {
+        event.stopPropagation();
+        onFilter();
+      }}
+      type="button"
+    >
+      {label}
+    </button>
+  );
+}
+
+export type SortDirection = "asc" | "desc";
+
+export function SortHeader({
+  label,
+  column,
+  sort,
+  direction,
+  onSort,
+}: {
+  label: string;
+  column: string;
+  sort: string;
+  direction: SortDirection;
+  onSort(column: string): void;
+}) {
+  const active = sort === column;
+  const Indicator = active
+    ? direction === "asc"
+      ? ArrowUp
+      : ArrowDown
+    : ChevronsUpDown;
+  return (
+    <button
+      aria-label={`${label}: ${active ? (direction === "asc" ? "ascendente" : "descendente") : "ordenar"}`}
+      className={`table-sort-button${active ? " is-active" : ""}`}
+      onClick={() => onSort(column)}
+      type="button"
+    >
+      <span>{label}</span>
+      <span aria-hidden="true" className="table-sort-indicator">
+        <Indicator size={14} />
+      </span>
+    </button>
+  );
+}
+
+export function LoadingState({ text = "Cargando…" }: { text?: string }) {
+  return (
+    <div className="loading-state" role="status" aria-live="polite">
+      <span className="loading-state-bar" aria-hidden="true" />
+      <span>{text}</span>
     </div>
   );
 }
 
-export function RelatedListItem({
-  title,
-  meta,
-  href,
-  onClick,
+export function ErrorState({
+  message,
+  action,
 }: {
-  title: string;
-  meta?: string;
-  href?: string;
-  onClick?: () => void;
+  message: string;
+  action?: ReactNode;
 }) {
-  const content = (
-    <>
-      <strong>{title}</strong>
-      {meta && <small>{meta}</small>}
-    </>
-  );
   return (
-    <li className="related-list-item">
-      {href ? (
-        <a href={href}>{content}</a>
-      ) : onClick ? (
-        <button onClick={onClick} type="button">
-          {content}
-        </button>
-      ) : (
-        <span>{content}</span>
-      )}
-    </li>
+    <div className="error-state" role="alert">
+      <strong>No se pudo cargar esta información</strong>
+      <p>{message}</p>
+      {action && <div className="empty-state-action">{action}</div>}
+    </div>
   );
+}
+
+export function StatusBadge({
+  value,
+  tone = "neutral",
+}: {
+  value: string;
+  tone?: "neutral" | "success" | "warning" | "danger";
+}) {
+  return <span className={`status-badge status-badge-${tone}`}>{value}</span>;
 }
 
 export function DocumentRow({
   name,
-  originalName,
-  contentType,
-  extension,
-  size,
-  createdAt,
+  metadata,
   href,
+  onClick,
+  target,
+  rel,
 }: {
   name: string;
-  originalName?: string;
-  contentType?: string;
-  extension?: string;
-  size?: number;
-  createdAt?: string;
+  metadata?: string;
   href?: string;
+  onClick?: MouseEventHandler<HTMLAnchorElement>;
+  target?: string;
+  rel?: string;
 }) {
-  const displayName = originalName || name;
-  const fileExtension = (extension || displayName.split(".").pop() || "FILE").toUpperCase();
-  const metadata = [
-    contentType || fileExtension,
-    size !== undefined ? formatBytes(size) : "",
-    createdAt ? dateTime(createdAt) : "",
-  ].filter(Boolean).join(" • ");
-  return (
-    <article className="document-row">
-      <span className="file-icon" aria-hidden="true">{fileExtension.slice(0, 4)}</span>
-      <div className="document-row-copy" title={displayName}>
-        <strong>{displayName}</strong>
+  const content = (
+    <>
+      <span className="document-row-icon" aria-hidden="true">
+        <FileText size={17} />
+      </span>
+      <span className="document-row-copy">
+        <strong title={name}>{name}</strong>
         {metadata && <small>{metadata}</small>}
-      </div>
-      {href && (
-        <a className="text-button" href={href} aria-label={`Abrir ${displayName}`}>
-          Abrir
-        </a>
-      )}
-    </article>
+      </span>
+    </>
   );
-}
-
-export function OverflowMenu({
-  label = "Más acciones",
-  items,
-}: {
-  label?: string;
-  items: Array<{ label: string; onSelect(): void; danger?: boolean; disabled?: boolean }>;
-}) {
-  return (
-    <details className="overflow-menu">
-      <summary aria-label={label}>•••</summary>
-      <div role="menu">
-        {items.map((item) => (
-          <button
-            className={item.danger ? "danger-menu-item" : undefined}
-            disabled={item.disabled}
-            key={item.label}
-            onClick={item.onSelect}
-            role="menuitem"
-            type="button"
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
-    </details>
+  return href ? (
+    <a
+      className="document-row"
+      href={href}
+      onClick={onClick}
+      rel={rel}
+      target={target}
+    >
+      {content}
+    </a>
+  ) : (
+    <div className="document-row">{content}</div>
   );
 }
 
@@ -479,6 +800,7 @@ export function Pagination({
         onClick={() => onPageChange(page - 1)}
         type="button"
       >
+        <ChevronLeft aria-hidden="true" size={15} />
         Anterior
       </button>
       <span aria-live="polite">
@@ -491,6 +813,7 @@ export function Pagination({
         type="button"
       >
         Siguiente
+        <ChevronRight aria-hidden="true" size={15} />
       </button>
     </nav>
   );
@@ -499,21 +822,17 @@ export function Pagination({
 export function Modal({
   title,
   eyebrow,
-  description,
   children,
   onClose,
   role = "dialog",
   wide = false,
-  footer,
 }: {
   title: string;
   eyebrow?: string;
-  description?: string;
   children: ReactNode;
   onClose(): void;
   role?: "alertdialog" | "dialog";
   wide?: boolean;
-  footer?: ReactNode;
 }) {
   const dialogRef = useRef<HTMLElement>(null);
   const onCloseRef = useRef(onClose);
@@ -567,7 +886,6 @@ export function Modal({
     >
       <section
         aria-labelledby={titleId}
-        aria-describedby={description ? `${titleId}-description` : undefined}
         aria-modal="true"
         className={wide ? "modal-dialog modal-wide" : "modal-dialog"}
         ref={dialogRef}
@@ -577,27 +895,15 @@ export function Modal({
           <div>
             {eyebrow && <p className="eyebrow">{eyebrow}</p>}
             <h2 id={titleId}>{title}</h2>
-            {description && (
-              <p className="modal-description" id={`${titleId}-description`}>
-                {description}
-              </p>
-            )}
           </div>
           <button aria-label="Cerrar" onClick={onClose} type="button">
-            ×
+            <X aria-hidden="true" size={18} />
           </button>
         </div>
         {children}
-        {footer && <div className="modal-footer">{footer}</div>}
       </section>
     </div>
   );
-}
-
-function formatBytes(value: number) {
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function Breadcrumbs({

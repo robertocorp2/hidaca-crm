@@ -48,7 +48,7 @@ function isInvoiceSpreadsheetExtension(extension: string) {
 }
 
 export async function POST(request: Request) {
-  const auth = await authorizeInvoiceApi({ write: true });
+  const auth = await authorizeInvoiceApi({ module: "importaciones", write: true, action: "create" });
   if (!auth.ok) return auth.response;
   const form = await request.formData();
   // Some edge multipart adapters retain entries but do not preserve the
