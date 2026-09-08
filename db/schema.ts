@@ -2595,7 +2595,7 @@ export const whatsappCampaignRecipients = sqliteTable("whatsapp_campaign_recipie
 
 export const aiProviderConfigs = sqliteTable("ai_provider_configs", {
   id: text("id").primaryKey(),
-  provider: text("provider", { enum: ["openai", "deepseek", "google"] }).notNull(),
+  provider: text("provider", { enum: ["openai", "deepseek", "google", "ollama-cloud"] }).notNull(),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
   transport: text("transport", { enum: ["direct", "gateway"] }).notNull().default("direct"),
   defaultModel: text("default_model").notNull().default(""),
@@ -2611,7 +2611,7 @@ export const aiProviderConfigs = sqliteTable("ai_provider_configs", {
 export const aiSettings = sqliteTable("ai_settings", {
   id: text("id").primaryKey(),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
-  defaultProvider: text("default_provider", { enum: ["openai", "deepseek", "google"] }).notNull().default("openai"),
+  defaultProvider: text("default_provider", { enum: ["openai", "deepseek", "google", "ollama-cloud"] }).notNull().default("openai"),
   fallbackEnabled: integer("fallback_enabled", { mode: "boolean" }).notNull().default(false),
   gatewayEnabled: integer("gateway_enabled", { mode: "boolean" }).notNull().default(false),
   toolAccess: text("tool_access", { enum: ["read_only"] }).notNull().default("read_only"),
