@@ -36,7 +36,8 @@ test("provider failures are typed and redact raw upstream bodies", async () => {
   await assert.rejects(providerJson("https://untrusted.example.org/?key=x", {}, async () => json({})), /policy_blocked/);
 });
 test("bounded JSON reader rejects oversized response and disables redirects", async () => {
-  await assert.rejects(providerJson("https://api.hunter.io/v2/domain-search", {}, async (_url, init) => { assert.equal(init?.redirect, "error"); return json({ payload: "x".repeat(4 * 1024 * 1024) }); }), /grande/);
+  await assert.rejects(providerJson("https://api.hunter.io/v2/domain-search", {}, async (_url, init) => { assert.equal(init?.redirect, "manual"); return json({ payload: "x".repeat(4 * 1024 * 1024) }); }), /grande/);
+  await assert.rejects(providerJson("https://api.hunter.io/v2/domain-search", {}, async () => new Response(null, { status: 302, headers: { location: "https://example.com" } })), /policy_blocked/);
 });
 test("DNS guard rejects mixed public/private answers, CNAME-only and reserved IPv6", async () => {
   for (const address of ["127.0.0.1", "10.0.0.2", "169.254.169.254", "100.64.0.1", "192.168.0.1", "2001:db8::1"]) await assert.rejects(validatePublicDns(facts.website, async () => json({ Status: 0, Answer: [{ type: address.includes(":") ? 28 : 1, data: address }] })), /policy_blocked/);
