@@ -89,9 +89,9 @@ The Google website/domain is not sent to PageSpeed, BuiltWith, Hunter, Ollama, o
 ## Automated / browser evidence
 
 - Compliance regression: `node --import tsx --test tests/prospecting-compliance.test.ts` — 3 passed.
-- Existing prospecting provider/storage tests remain green for provider normalization, Place-ID retention, snapshot redaction, expiry cleanup, retry/error handling, and feature kill switches. Legacy end-to-end conversion fixtures that assume Google fields may populate CRM must be updated to provide independent mapping values; they are not evidence of a regression in the new policy boundary.
-- Staging Google sandbox previously completed one minimal Places API (New) search with server-side key use; D1 inspection showed Place ID durable, `pi_snapshots.data={}`, and listing fields only in expiring `pi_place_context`.
-- Playwright/Edge staging acceptance previously verified desktop/mobile rendering, result/detail panels, native invalid-coordinate validation, Google Maps link visibility, conversion preview, no console errors, and no failed requests. A fresh browser run is required after deploying this compliance patch.
+- The full prospecting suite `npm run test:prospecting` passes 48/48, including provider normalization, Place-ID retention, snapshot redaction, expiry cleanup, retry/error handling, feature kill switches, and the new compliance regression tests.
+- Staging Google sandbox completed one minimal Places API (New) search with server-side key use; D1 inspection showed Place ID durable, `pi_snapshots.data={}`, and listing fields only in expiring `pi_place_context`.
+- Playwright/Edge staging acceptance after the compliance deployment verified desktop/mobile rendering, saved results/detail panels, Google Maps attribution/link visibility, conversion preview, no console errors, no failed requests, and no horizontal overflow at a 390px viewport.
 
 ## Remaining questions and release decision
 
