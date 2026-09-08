@@ -1,4 +1,4 @@
-// SQL migration 0015 is authoritative, including immutable-snapshot triggers.
+// SQL migration 0022 is authoritative, including immutable-snapshot triggers.
 import { sql } from "drizzle-orm";
 import { sqliteTable, text, integer, real, primaryKey, unique, index, uniqueIndex, foreignKey, check } from "drizzle-orm/sqlite-core";
 
@@ -331,3 +331,4 @@ export const piBudgetReservations = sqliteTable("pi_budget_reservations", {
   unique().on(table.tenantId, table.jobId, table.leaseToken),
   foreignKey({ columns: [table.tenantId, table.jobId], foreignColumns: [piJobs.tenantId, piJobs.id] }),
 ]);
+

@@ -43,7 +43,7 @@ async function discover(db: ReturnType<typeof database>, adapters = fixtures()) 
 test("migration enforces tenant FKs, immutable evidence and reversible empty installation", () => {
   const db = database();
   assert.throws(() => db.sqlite.exec("INSERT INTO pi_identities(tenant_id,identity_key,prospect_id,created_at) VALUES('other','x','missing','now')"), /FOREIGN KEY/);
-  db.sqlite.exec(readFileSync(new URL("../drizzle/rollback/0015_prospecting_intelligence.down.sql", import.meta.url), "utf8"));
+  db.sqlite.exec(readFileSync(new URL("../drizzle/rollback/0022_prospecting_intelligence.down.sql", import.meta.url), "utf8"));
   assert.equal(db.sqlite.prepare("SELECT count(*) n FROM sqlite_master WHERE type='table' AND name LIKE 'pi_%'").get()?.n, 0);
   assert.ok(db.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='businesses'").get());
   db.sqlite.close();
@@ -335,3 +335,4 @@ test("replayed applied repair restores its interrupted conversion enqueue", asyn
     assert.equal(db.sqlite.prepare("SELECT count(*) n FROM pi_jobs WHERE operation='convert'").get()?.n, 1);
   } finally { db.sqlite.close(); }
 });
+

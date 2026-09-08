@@ -1,0 +1,146 @@
+import { execFileSync } from "node:child_process";
+import { access, cp, mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const forwardMigrationPattern = /^\d{4}_[^/]+\.sql$/;
+const snapshotPattern = /^\d{4}_snapshot\.json$/;
+function assertExpectedMigrations(migrationNames) {
+  const migrationNumbers = migrationNames.map((name) => Number(name.slice(0, 4)));
+  const expected = Array.from(
+    { length: migrationNumbers.length },
+    (_, index) => index,
+  );
+  if (
+    migrationNumbers.length === 0 ||
+    migrationNumbers.some((number, index) => number !== expected[index])
+  ) {
+    throw new Error(
+      `Expected contiguous forward migrations starting at 0000, found: ${migrationNames.join(", ")}`,
+    );
+  }
+}
+
+function archiveEntries(archivePath) {
+  return execFileSync("tar", ["-tzf", archivePath], {
+    encoding: "utf8",
+  })
+    .split(/\r?\n/)
+    .filter(Boolean);
+}
+
+export async function packageSitesArchive(projectRoot, outputArchive) {
+  const root = path.resolve(projectRoot);
+  const buildDirectory = path.join(root, "dist");
+  const hostingFile = path.join(root, ".openai", "hosting.json");
+  const sourceDrizzleDirectory = path.join(root, "drizzle");
+  const archivePath = path.resolve(outputArchive);
+
+  await access(path.join(buildDirectory, "server", "index.js"));
+  await access(hostingFile);
+  await access(sourceDrizzleDirectory);
+
+  const sourceEntries = await readdir(sourceDrizzleDirectory, {
+    withFileTypes: true,
+  });
+  const migrationNames = sourceEntries
+    .filter(
+      (entry) =>
+        entry.isFile() && forwardMigrationPattern.test(entry.name),
+    )
+    .map((entry) => entry.name)
+    .sort();
+  assertExpectedMigrations(migrationNames);
+
+  const sourceMetadataDirectory = path.join(sourceDrizzleDirectory, "meta");
+  const metadataEntries = await readdir(sourceMetadataDirectory, {
+    withFileTypes: true,
+  });
+  const snapshotNames = metadataEntries
+    .filter((entry) => entry.isFile() && snapshotPattern.test(entry.name))
+    .map((entry) => entry.name)
+    .sort();
+  if (!metadataEntries.some((entry) => entry.isFile() && entry.name === "_journal.json")) {
+    throw new Error("Required Drizzle migration journal is missing");
+  }
+
+  const stageDirectory = await mkdtemp(
+    path.join(os.tmpdir(), "hidaca-sites-archive-"),
+  );
+  try {
+    const stagedDistDirectory = path.join(stageDirectory, "dist");
+    const stagedOpenAiDirectory = path.join(stagedDistDirectory, ".openai");
+    const stagedDrizzleDirectory = path.join(stagedOpenAiDirectory, "drizzle");
+    const stagedMetadataDirectory = path.join(stagedDrizzleDirectory, "meta");
+
+    await cp(buildDirectory, stagedDistDirectory, { recursive: true });
+    await mkdir(stagedOpenAiDirectory, { recursive: true });
+    await cp(hostingFile, path.join(stagedOpenAiDirectory, "hosting.json"));
+
+    // Recreate this directory from an allowlist so later packaging cannot
+    // reintroduce rollback, archive, or unrelated source drizzle files.
+    await rm(stagedDrizzleDirectory, { recursive: true, force: true });
+    await mkdir(stagedMetadataDirectory, { recursive: true });
+
+    for (const migrationName of migrationNames) {
+      await cp(
+        path.join(sourceDrizzleDirectory, migrationName),
+        path.join(stagedDrizzleDirectory, migrationName),
+      );
+    }
+    await cp(
+      path.join(sourceMetadataDirectory, "_journal.json"),
+      path.join(stagedMetadataDirectory, "_journal.json"),
+    );
+    for (const snapshotName of snapshotNames) {
+      await cp(
+        path.join(sourceMetadataDirectory, snapshotName),
+        path.join(stagedMetadataDirectory, snapshotName),
+      );
+    }
+
+    await mkdir(path.dirname(archivePath), { recursive: true });
+    execFileSync(
+      "tar",
+      ["-C", stageDirectory, "-czf", archivePath, "dist"],
+      { stdio: "inherit" },
+    );
+
+    const entries = archiveEntries(archivePath);
+    const forbiddenEntries = entries.filter((entry) =>
+      /(?:^|\/)rollback(?:\/|$)|\.down\.sql$/i.test(entry),
+    );
+    if (forbiddenEntries.length > 0) {
+      throw new Error(
+        `Forbidden rollback entries found in final archive: ${forbiddenEntries.join(", ")}`,
+      );
+    }
+
+    return {
+      archivePath,
+      migrationNames,
+      metadataNames: ["_journal.json", ...snapshotNames],
+      entries,
+    };
+  } finally {
+    await rm(stageDirectory, { recursive: true, force: true });
+  }
+}
+
+async function main() {
+  const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const archivePath =
+    process.argv[2] ?? path.resolve(projectRoot, "..", "hidaca-sites-safe.tar.gz");
+  const result = await packageSitesArchive(projectRoot, archivePath);
+  console.log(
+    `Packaged ${result.migrationNames.length} forward migrations and ${result.metadataNames.length} metadata files into ${result.archivePath}`,
+  );
+}
+
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  await main();
+}

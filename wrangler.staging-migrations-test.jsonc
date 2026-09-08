@@ -1,0 +1,5 @@
+{
+  "name": "hidaca-staging-migrations-test",
+  "compatibility_date": "2026-09-07",
+  "d1_databases": [{"binding":"DB","database_name":"hidaca-staging-migrations-test","database_id":"3c6d1a7e-e7c3-4516-bf44-42f646948afb","migrations_dir":"C:/Users/rober/Documents/Codex/hidaca-migrations-normalized"}]
+}

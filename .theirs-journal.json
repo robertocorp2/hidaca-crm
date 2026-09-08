@@ -110,64 +110,8 @@
     {
       "idx": 15,
       "version": "6",
-      "when": 1786944000000,
-      "tag": "0015_module_permissions",
-      "breakpoints": true
-    },
-    {
-      "idx": 16,
-      "version": "6",
-      "when": 1787256421915,
-      "tag": "0016_little_terrax",
-      "breakpoints": true
-    },
-    {
-      "idx": 17,
-      "version": "6",
-      "when": 1787703555025,
-      "tag": "0017_native_whatsapp",
-      "breakpoints": true
-    },
-    {
-      "idx": 18,
-      "version": "6",
-      "when": 1787747675673,
-      "tag": "0018_flaky_squadron_sinister",
-      "breakpoints": true
-    },
-    {
-      "idx": 19,
-      "version": "6",
-      "when": 1787756434716,
-      "tag": "0019_friendly_albert_cleary",
-      "breakpoints": true
-    },
-    {
-      "idx": 20,
-      "version": "6",
-      "when": 1787757000000,
-      "tag": "0020_ai_approval_permission",
-      "breakpoints": true
-    },
-    {
-      "idx": 21,
-      "version": "6",
-      "when": 1787787853477,
-      "tag": "0021_loving_famine",
-      "breakpoints": true
-    },
-    {
-      "idx": 22,
-      "version": "7",
-      "when": 1788000000000,
-      "tag": "0022_prospecting_intelligence",
-      "breakpoints": true
-    },
-    {
-      "idx": 23,
-      "version": "7",
-      "when": 1788000001000,
-      "tag": "0023_place_id_first_google_context",
+      "when": 1788739200000,
+      "tag": "0015_prospecting_intelligence",
       "breakpoints": true
     }
   ]

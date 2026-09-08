@@ -6,7 +6,7 @@ Implementation: branch `codex/prospecting-intelligence`, based on `docs/prospect
 
 | Plan task | Implementation | Verification |
 | --- | --- | --- |
-| 1. Contracts/persistence | `contracts.ts`, `domain.ts`, `repository.ts`, migrations 0015 and 0016, Drizzle schema/snapshot | Deterministic identity, Place-ID-first canonicalization, expiring Google context, tenant foreign keys, immutable evidence/scores, empty-install down migration; schema generation reports no drift |
+| 1. Contracts/persistence | `contracts.ts`, `domain.ts`, `repository.ts`, migrations 0022 and 0023, Drizzle schema/snapshot | Deterministic identity, Place-ID-first canonicalization, expiring Google context, tenant foreign keys, immutable evidence/scores, empty-install down migration; schema generation reports no drift |
 | 2. Jobs/budgets | D1 queue, fenced leases, backoff, circuits, atomic budget reservations, structured events | Concurrent enqueue, lease expiry/renewal, final-attempt reconciliation, timeout/429/credential fixtures, provider and tenant caps, interrupted acknowledgement |
 | 3. Discovery | Google Places Text/Nearby adapters and cached search service | Explicit masks, pagination, radius, partial/empty results, typed errors, Place-ID identity, tenant isolation; one live minimal Text Search sandbox passed with normalized output and no durable listing payload |
 | 4. Enrichment | PageSpeed, BuiltWith, Hunter, optional-provider port, separate worker | Current-schema fixtures, public DNS/URL checks, redirects denied, bounded JSON, timeout, partial provider failure, AES-GCM tenant binding and erasure |
@@ -41,3 +41,4 @@ Independent review identified and prompted regression fixes for formatted legacy
 2. **Google storage policy:** The implementation now retains only Place IDs durably and holds listing fields in a 24-hour expiring context table; the field-level audit is in `google-storage-audit.md`. This reduces storage exposure but does not replace confirmation under the applicable Google agreement, attribution, and downstream CRM-use review.
 
 Production-wide enablement remains outside the plan's implementation scope. Rollback is flag-first and preserves evidence/CRM history. Destructive down migration is tested only against an empty local installation.
+

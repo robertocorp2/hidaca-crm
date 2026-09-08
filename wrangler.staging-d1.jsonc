@@ -1,0 +1,5 @@
+{
+  "name": "hidaca-staging-d1-check",
+  "compatibility_date": "2026-09-07",
+  "d1_databases": [{"binding":"DB","database_name":"hidaca-staging-d1","database_id":"548937e4-e6fc-4c07-9cc4-c1c0d3e287e9","migrations_dir":"drizzle"}]
+}
