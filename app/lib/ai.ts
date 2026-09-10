@@ -1,4 +1,4 @@
-export type AiProvider = "openai" | "deepseek" | "google";
+export type AiProvider = "openai" | "deepseek" | "google" | "ollama-cloud";
 export type AiTransport = "direct" | "gateway";
 
 export type NormalizedMessage = {
@@ -49,6 +49,12 @@ export type AiEnvironment = {
   AI_OPENAI_MODEL?: string;
   AI_DEEPSEEK_MODEL?: string;
   AI_GEMINI_MODEL?: string;
+  OLLAMA_API_KEY?: string;
+  OLLAMA_BASE_URL?: string;
+  OLLAMA_MODEL?: string;
+  OLLAMA_TIMEOUT_MS?: string;
+  OLLAMA_ALLOW_LOCAL?: string;
+  AI_OLLAMA_ENABLED?: string;
   OPENAI_API_KEY?: string;
   DEEPSEEK_API_KEY?: string;
   GEMINI_API_KEY?: string;
@@ -59,9 +65,9 @@ export type AiEnvironment = {
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-const providerNames: readonly AiProvider[] = ["openai", "deepseek", "google"];
+const providerNames: readonly AiProvider[] = ["openai", "deepseek", "google", "ollama-cloud"];
 const providerKey = (env: AiEnvironment, provider: AiProvider) =>
-  provider === "openai" ? env.OPENAI_API_KEY : provider === "deepseek" ? env.DEEPSEEK_API_KEY : env.GEMINI_API_KEY;
+  provider === "openai" ? env.OPENAI_API_KEY : provider === "deepseek" ? env.DEEPSEEK_API_KEY : provider === "google" ? env.GEMINI_API_KEY : env.OLLAMA_API_KEY;
 
 export function isAiProvider(value: unknown): value is AiProvider {
   return typeof value === "string" && providerNames.includes(value as AiProvider);
@@ -75,7 +81,9 @@ export function providerAvailability(env: AiEnvironment) {
   const gateway = Boolean(env.CF_AI_GATEWAY_TOKEN && env.CF_ACCOUNT_ID && env.CF_AI_GATEWAY_NAME);
   return providerNames.map((provider) => ({
     provider,
-    configured: Boolean(providerKey(env, provider)),
+    configured: provider === "ollama-cloud"
+      ? env.AI_OLLAMA_ENABLED !== "false" && Boolean(providerKey(env, provider))
+      : Boolean(providerKey(env, provider)),
     defaultModel: modelFor(env, provider),
     gatewayAvailable: gateway,
     transport: gateway && env.AI_GATEWAY_ENABLED === "true" ? "gateway" as const : "direct" as const,
@@ -87,7 +95,9 @@ function modelFor(env: AiEnvironment, provider: AiProvider) {
     ? env.AI_OPENAI_MODEL ?? env.AI_DEFAULT_MODEL ?? ""
     : provider === "deepseek"
       ? env.AI_DEEPSEEK_MODEL ?? env.AI_DEFAULT_MODEL ?? ""
-      : env.AI_GEMINI_MODEL ?? env.AI_DEFAULT_MODEL ?? "";
+      : provider === "google"
+        ? env.AI_GEMINI_MODEL ?? env.AI_DEFAULT_MODEL ?? ""
+        : env.OLLAMA_MODEL ?? env.AI_DEFAULT_MODEL ?? "";
 }
 
 function providerCandidates(env: AiEnvironment, requested?: AiProvider, allowFallback = false): AiProvider[] {
@@ -129,6 +139,7 @@ function jsonResponse(value: unknown): JsonRecord {
 }
 
 async function directChat(env: AiEnvironment, provider: AiProvider, request: AiRequest, fetcher: Fetcher): Promise<AiResponse> {
+  if (provider === "ollama-cloud") return directOllama(env, request, fetcher);
   const key = providerKey(env, provider);
   if (!key) throw new Error(`AI_${provider.toUpperCase()}_NOT_CONFIGURED`);
   const model = request.model || modelFor(env, provider);
@@ -165,6 +176,71 @@ async function directChat(env: AiEnvironment, provider: AiProvider, request: AiR
     transport: "direct",
     requestId: typeof body.id === "string" ? body.id : undefined,
   };
+}
+
+const OLLAMA_CLOUD_HOSTS = new Set(["ollama.com", "www.ollama.com"]);
+
+function ollamaUrl(env: AiEnvironment) {
+  let url: URL;
+  try { url = new URL(env.OLLAMA_BASE_URL || "https://ollama.com/api"); } catch { throw new Error("AI_OLLAMA_BASE_URL_INVALID"); }
+  const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  if ((url.protocol !== "https:" && !(local && env.OLLAMA_ALLOW_LOCAL === "true")) || (!OLLAMA_CLOUD_HOSTS.has(url.hostname) && !(local && env.OLLAMA_ALLOW_LOCAL === "true"))) throw new Error("AI_OLLAMA_BASE_URL_BLOCKED");
+  url.pathname = url.pathname.replace(/\/+$/, "") || "/api";
+  if (url.pathname !== "/api") throw new Error("AI_OLLAMA_BASE_URL_INVALID");
+  url.search = ""; url.hash = "";
+  return url;
+}
+
+async function directOllama(env: AiEnvironment, request: AiRequest, fetcher: Fetcher): Promise<AiResponse> {
+  if (env.AI_OLLAMA_ENABLED === "false") throw new Error("AI_OLLAMA_DISABLED");
+  const key = env.OLLAMA_API_KEY?.trim();
+  if (!key) throw new Error("AI_OLLAMA_CLOUD_NOT_CONFIGURED");
+  const model = request.model || modelFor(env, "ollama-cloud");
+  if (!model) throw new Error("AI_OLLAMA_MODEL_NOT_CONFIGURED");
+  if (request.stream) throw new Error("AI_OLLAMA_STREAMING_UNSUPPORTED");
+  if (request.responseSchema) throw new Error("AI_OLLAMA_STRUCTURED_OUTPUT_UNSUPPORTED");
+  const controller = new AbortController();
+  const timeout = Math.min(120000, Math.max(1000, Number(env.OLLAMA_TIMEOUT_MS) || 30000));
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetcher(ollamaUrl(env).origin + ollamaUrl(env).pathname + "/chat", {
+      method: "POST", signal: controller.signal,
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model, messages: request.messages.map((message) => ({ role: message.role, content: normalizedContent(message.content) })), stream: false, ...(request.tools?.length ? { tools: normalizeTools(request.tools) } : {}) }),
+    });
+    if (response.status >= 300 && response.status < 400) throw new Error("AI_OLLAMA_REDIRECT_BLOCKED");
+    if (!response.ok) throw await providerError(response);
+    const body = jsonResponse(await response.json());
+    const message = jsonResponse(body.message);
+    const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls.map((value: unknown) => {
+      const call = jsonResponse(value), fn = jsonResponse(call.function);
+      return { id: String(call.id ?? crypto.randomUUID()), name: String(fn.name ?? ""), arguments: parseObject(fn.arguments) };
+    }).filter((call: NormalizedToolCall) => call.name) : [];
+    const text = normalizedContent(message.content);
+    if (!text && !toolCalls.length) throw new Error("AI_OLLAMA_EMPTY_RESPONSE");
+    const usage = jsonResponse(body);
+    const responseModel = typeof body.model === "string" ? body.model.slice(0, 120) : "";
+    const responseId = typeof body.id === "string" ? body.id.slice(0, 200) : "";
+    return { text, toolCalls, usage: { inputTokens: numberOrUndefined(usage.prompt_eval_count), outputTokens: numberOrUndefined(usage.eval_count) }, provider: "ollama-cloud", model: responseModel || model, transport: "direct", requestId: responseId || undefined };
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("AI_")) throw error;
+    throw new Error(controller.signal.aborted ? "AI_OLLAMA_TIMEOUT" : "AI_OLLAMA_UNAVAILABLE");
+  } finally { clearTimeout(timer); }
+}
+
+export async function listOllamaModels(env: AiEnvironment, fetcher: Fetcher = fetch) {
+  if (env.AI_OLLAMA_ENABLED === "false") throw new Error("AI_OLLAMA_DISABLED");
+  const key = env.OLLAMA_API_KEY?.trim();
+  if (!key) throw new Error("AI_OLLAMA_CLOUD_NOT_CONFIGURED");
+  const url = ollamaUrl(env);
+  const response = await fetcher(url.origin + url.pathname + "/tags", { headers: { Authorization: `Bearer ${key}` } });
+  if (response.status >= 300 && response.status < 400) throw new Error("AI_OLLAMA_REDIRECT_BLOCKED");
+  if (!response.ok) throw await providerError(response);
+  const body = jsonResponse(await response.json());
+  return (Array.isArray(body.models) ? body.models : []).slice(0, 100).flatMap((item: unknown) => {
+    const value = jsonResponse(item), name = typeof value.name === "string" ? value.name.slice(0, 200) : "";
+    return name ? [{ id: name, provider: "ollama-cloud" as const, displayName: name, capabilities: { chat: true, text: true, streaming: false, toolCalling: true, structuredOutput: false } }] : [];
+  });
 }
 
 async function directGemini(env: AiEnvironment, key: string, model: string, request: AiRequest, fetcher: Fetcher): Promise<AiResponse> {
@@ -236,7 +312,7 @@ export function createAiProviderRouter(env: AiEnvironment, fetcher: Fetcher = fe
       const errors: string[] = [];
       for (const provider of candidates) {
         try {
-          const transport = transportFor(env);
+          const transport = provider === "ollama-cloud" ? "direct" : transportFor(env);
           return transport === "gateway" ? await gatewayChat(env, provider, request, fetcher) : await directChat(env, provider, request, fetcher);
         } catch (error) {
           errors.push(error instanceof Error ? error.message : "AI_PROVIDER_FAILED");

@@ -15,6 +15,7 @@ test("provider availability never exposes credentials and respects feature flag"
     { provider: "openai", configured: true },
     { provider: "deepseek", configured: true },
     { provider: "google", configured: false },
+    { provider: "ollama-cloud", configured: false },
   ]);
   assert.doesNotMatch(JSON.stringify(providerAvailability(env)), /secret|deep-key/);
 });
