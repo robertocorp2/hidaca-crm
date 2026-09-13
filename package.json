@@ -14,7 +14,9 @@
     "test:artifact": "node --test tests/invoice-import-build-artifact.check.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern outputs",
     "typecheck": "tsc --noEmit",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "test:prospecting": "node --import tsx --test tests/prospecting-*.test.ts",
+    "build:prospecting": "wrangler deploy --dry-run --config wrangler.prospecting.jsonc --outdir dist/prospecting"
   },
   "dependencies": {
     "@e965/xlsx": "^0.20.3",
@@ -44,7 +46,8 @@
     "typescript": "5.9.3",
     "vinext": "0.0.50",
     "vite": "^8.1.5",
-    "wrangler": "4.92.0"
+    "wrangler": "4.92.0",
+    "miniflare": "4.20260515.0"
   },
   "type": "module"
 }

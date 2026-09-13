@@ -1,0 +1,26 @@
+-- Development/empty-install rollback only. Production rollback disables flags and preserves evidence.
+DROP TABLE pi_budget_reservations;
+DROP TABLE pi_requests;
+DROP TABLE pi_events;
+DROP TABLE pi_circuits;
+DROP TABLE pi_budgets;
+DROP TABLE pi_provider_credentials;
+DROP TABLE pi_bulk_items;
+DROP TABLE pi_bulk;
+DROP TABLE pi_crm_links;
+DROP TABLE pi_export_operations;
+DROP TABLE pi_exports;
+DROP TABLE pi_dedup_decisions;
+DROP TABLE pi_findings;
+DROP TABLE pi_audits;
+DROP TABLE pi_score_evidence;
+DROP TABLE pi_scores;
+DROP TABLE pi_contact_vault;
+DROP TABLE pi_snapshots;
+DROP TABLE IF EXISTS pi_place_context;
+DROP TABLE pi_searches;
+DROP TABLE pi_jobs;
+DROP TABLE pi_sources;
+DROP TABLE pi_identities;
+DROP TABLE pi_prospects;
+DROP TABLE pi_policies;
