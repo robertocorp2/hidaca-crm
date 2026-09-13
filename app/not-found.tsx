@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function NotFound() {
   return (
     <main className="login-shell">
@@ -10,9 +12,9 @@ export default function NotFound() {
         <p>
           La dirección que buscas no existe o dejó de estar disponible.
         </p>
-        <a className="primary-button" href="/">
+        <Link className="primary-button" href="/app">
           Volver al inicio
-        </a>
+        </Link>
         <span className="security-note">
           El acceso al CRM sigue protegido y requiere una sesión autorizada.
         </span>

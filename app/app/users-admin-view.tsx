@@ -3,6 +3,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import {
   permissionModules,
+  rolePermissionDefaults,
   resolveEffectivePermissions,
   type EffectivePermissions,
   type PermissionAction,
@@ -26,11 +27,18 @@ import {
 } from "./ui";
 
 type Override = { module: PermissionModuleKey; action: PermissionAction; effect: PermissionEffect };
-type PermissionPayload = { overrides: Override[]; permissions: EffectivePermissions };
-type Editor = { user: StaffUser | null; name: string; email: string; role: StaffRole; active: boolean; overrides: Override[]; permissions: EffectivePermissions };
+type PermissionDefault = { module: string; action: string; allowed: boolean };
+type PermissionPayload = { defaults: PermissionDefault[]; overrides: Override[]; permissions: EffectivePermissions };
+type Editor = { user: StaffUser | null; name: string; email: string; role: StaffRole; active: boolean; defaults: PermissionDefault[]; overrides: Override[]; permissions: EffectivePermissions };
 
-function effectivePreview(role: StaffRole, overrides: Override[]): EffectivePermissions {
-  return resolveEffectivePermissions(role, [], overrides);
+function effectivePreview(role: StaffRole, defaults: PermissionDefault[], overrides: Override[]): EffectivePermissions {
+  return resolveEffectivePermissions(role, defaults, overrides);
+}
+
+function builtInDefaults(role: StaffRole): PermissionDefault[] {
+  return Object.entries(rolePermissionDefaults[role]).flatMap(([module, actions]) =>
+    Object.entries(actions).map(([action, allowed]) => ({ module, action, allowed })),
+  );
 }
 
 function roleLabel(role: StaffRole) {
@@ -73,7 +81,8 @@ export function UsersAdminView({
 
   function openNew() {
     const role: StaffRole = "operator";
-    setEditor({ user: null, name: "", email: "", role, active: true, overrides: [], permissions: effectivePreview(role, []) });
+    const defaults = builtInDefaults(role);
+    setEditor({ user: null, name: "", email: "", role, active: true, defaults, overrides: [], permissions: effectivePreview(role, defaults, []) });
     setTab("general");
   }
 
@@ -81,7 +90,7 @@ export function UsersAdminView({
     if (!editor) return;
     const next = editor.overrides.filter((item) => item.module !== moduleKey || item.action !== action);
     if (effect !== "inherit") next.push({ module: moduleKey, action, effect });
-    setEditor({ ...editor, overrides: next, permissions: effectivePreview(editor.role, next) });
+    setEditor({ ...editor, overrides: next, permissions: effectivePreview(editor.role, editor.defaults, next) });
   }
 
   function applyPreset(kind: "reset" | "all" | "readonly" | "none") {
@@ -95,7 +104,7 @@ export function UsersAdminView({
         permissionModule.actions.map((action) => ({ module: permissionModule.key, action, effect: action === "view" ? "allow" as const : "deny" as const })));
       if (kind === "none") next = permissionModules.flatMap((permissionModule) =>
         permissionModule.actions.map((action) => ({ module: permissionModule.key, action, effect: "deny" as const })));
-      setEditor({ ...editor, overrides: next, permissions: effectivePreview(editor.role, next) });
+      setEditor({ ...editor, overrides: next, permissions: effectivePreview(editor.role, editor.defaults, next) });
     };
     confirm("Este preset reemplazará la personalización actual. Podrás revisar el resultado antes de guardar.", "Aplicar preset", action);
   }
@@ -194,7 +203,7 @@ export function UsersAdminView({
         {tab === "general" ? <div className="user-general-grid">
           <label htmlFor="user-editor-name">Nombre<input autoComplete="name" id="user-editor-name" name="name" required value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} /></label>
           <label htmlFor="user-editor-email">Correo de ChatGPT<input autoComplete="email" disabled={self} id="user-editor-email" name="email" required type="email" value={editor.email} onChange={(event) => setEditor({ ...editor, email: event.target.value })} /></label>
-          <label htmlFor="user-editor-role">Rol<select autoComplete="off" disabled={self} id="user-editor-role" name="role" value={editor.role} onChange={(event) => { const role = event.target.value as StaffRole; setEditor({ ...editor, role, permissions: effectivePreview(role, editor.overrides) }); }}><option value="admin">Administrador</option><option value="operator">Operador</option><option value="viewer">Solo lectura</option></select></label>
+          <label htmlFor="user-editor-role">Rol<select autoComplete="off" disabled={self} id="user-editor-role" name="role" value={editor.role} onChange={(event) => { const role = event.target.value as StaffRole; const defaults = builtInDefaults(role); setEditor({ ...editor, role, defaults, permissions: effectivePreview(role, defaults, editor.overrides) }); }}><option value="admin">Administrador</option><option value="operator">Operador</option><option value="viewer">Solo lectura</option></select></label>
           <label htmlFor="user-editor-status">Estado<select autoComplete="off" disabled={self} id="user-editor-status" name="status" value={editor.active ? "active" : "inactive"} onChange={(event) => {
             const active = event.target.value === "active";
             if (!active && editor.active) {

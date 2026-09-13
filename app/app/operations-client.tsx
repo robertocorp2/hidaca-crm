@@ -313,7 +313,10 @@ export function OperationsClient({
   }, [currentUser.permissions, invoiceFeatureEnabled]);
 
   useEffect(() => {
-    if (view === "resumen") void refreshReceivableBalance();
+    if (view !== "resumen") return;
+    void (async () => {
+      await refreshReceivableBalance();
+    })();
   }, [refreshReceivableBalance, view]);
   const visibleNavigationGroups = (
     navigationGroups as readonly NavigationGroup[]
@@ -725,7 +728,6 @@ export function OperationsClient({
     setShowForm(false);
     setEditing(null);
     setMessage("Registro guardado.");
-    if (view === "resumen") void refreshReceivableBalance();
   }
 
   async function archiveRecord(record: RecordRow) {

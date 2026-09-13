@@ -10,6 +10,7 @@ import {
 import { getChatGPTUser, requireChatGPTUser, type ChatGPTUser } from "../chatgpt-auth";
 
 export type PermissionOverride = { module: PermissionModuleKey; action: PermissionAction; effect: PermissionEffect };
+export type PermissionDefault = { module: string; action: string; allowed: boolean };
 export type AuthorizedUser = ChatGPTUser & {
   staffUserId: number;
   role: StaffRole;
@@ -39,7 +40,7 @@ export async function permissionsForStaffUser(user: { id: number; role: StaffRol
       isPermissionModuleKey(item.module) && permissionActions.includes(item.action) &&
       (item.effect === "allow" || item.effect === "deny"),
   );
-  return { permissions: resolvePermissionMatrix(user.role, defaults, overrides), overrides };
+  return { permissions: resolvePermissionMatrix(user.role, defaults, overrides), defaults, overrides };
 }
 
 async function resolveAuthorizedUser(user: ChatGPTUser): Promise<AuthorizedUser | null> {

@@ -13,6 +13,7 @@ export async function GET(request: Request) {
     return Response.json({
       totalBalance: await getDashboardReceivableBalance(),
       asOf: now,
+      source: "normalized_invoice_read_model",
     });
   }
   const receivables =
@@ -33,10 +34,22 @@ export async function GET(request: Request) {
              b.name AS businessName, x.issue_date AS issueDate,
              x.due_date AS dueDate, x.currency, x.total_amount AS totalAmount,
              x.paid AS paidAmount, x.credited AS creditedAmount,
-             COALESCE(x.total_amount - x.paid - x.credited, x.balance_amount_snapshot) AS balanceAmount,
+             CASE
+               WHEN x.status IN ('cancelled', 'replaced', 'void', 'draft') THEN 0
+               WHEN x.paid > 0 OR x.credited > 0 THEN MAX(COALESCE(x.total_amount, 0) - x.paid - x.credited, 0)
+               WHEN x.balance_amount_snapshot IS NOT NULL THEN MAX(x.balance_amount_snapshot, 0)
+               WHEN x.status = 'paid' THEN 0
+               ELSE MAX(COALESCE(x.total_amount, 0), 0)
+             END AS balanceAmount,
              CASE
                WHEN x.status = 'cancelled' THEN 'cancelled'
-               WHEN COALESCE(x.total_amount - x.paid - x.credited, x.balance_amount_snapshot, 0) <= 0.005 THEN 'paid'
+               WHEN CASE
+                 WHEN x.status IN ('cancelled', 'replaced', 'void', 'draft') THEN 0
+                 WHEN x.paid > 0 OR x.credited > 0 THEN MAX(COALESCE(x.total_amount, 0) - x.paid - x.credited, 0)
+                 WHEN x.balance_amount_snapshot IS NOT NULL THEN MAX(x.balance_amount_snapshot, 0)
+                 WHEN x.status = 'paid' THEN 0
+                 ELSE MAX(COALESCE(x.total_amount, 0), 0)
+               END <= 0.005 THEN 'paid'
                WHEN x.due_date IS NOT NULL AND x.due_date < ? THEN 'overdue'
                WHEN x.paid + x.credited > 0 THEN 'partial'
                ELSE 'unpaid'
