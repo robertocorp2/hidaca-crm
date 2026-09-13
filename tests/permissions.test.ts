@@ -48,6 +48,20 @@ test("dependencies are enabled transitively without overriding explicit denials"
   assert.equal(permissions.usuarios.view, false);
 });
 
+test("persisted role denials remain denied while explicit allows can opt in", () => {
+  const defaults = [
+    { module: "proyectos", action: "view", allowed: true },
+    { module: "clientes", action: "view", allowed: false },
+  ];
+  const denied = resolveEffectivePermissions("viewer", defaults);
+  assert.equal(denied.proyectos.view, true);
+  assert.equal(denied.clientes.view, false);
+  const allowed = resolveEffectivePermissions("viewer", defaults, [
+    { module: "clientes", action: "view", effect: "allow" },
+  ]);
+  assert.equal(allowed.clientes.view, true);
+});
+
 test("catalog contains every requested module and shared view pairs", () => {
   assert.equal(permissionModules.length, 25);
   assert.deepEqual(permissionModules.find((item) => item.key === "ai")?.actions, ["view", "create", "edit", "approve", "administer"]);

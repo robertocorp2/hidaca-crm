@@ -162,12 +162,13 @@ export function resolveEffectivePermissions(
   }
   for (const value of defaults) if (isPermissionModuleKey(value.module) && permissionActions.includes(value.action as PermissionAction)) {
     effective[value.module][value.action as PermissionAction] = value.allowed;
+    if (!value.allowed) explicitDenials.add(`${value.module}:${value.action}`);
   }
   for (const override of overrides) if (isPermissionModuleKey(override.module) && permissionActions.includes(override.action as PermissionAction)) {
+    const key = `${override.module}:${override.action}`;
     effective[override.module][override.action as PermissionAction] = override.effect === "allow";
-    if (override.effect === "deny") {
-      explicitDenials.add(`${override.module}:${override.action}`);
-    }
+    if (override.effect === "allow") explicitDenials.delete(key);
+    else explicitDenials.add(key);
   }
   if (role !== "admin") for (const action of permissionActions) effective.usuarios[action] = false;
   let changed = true;

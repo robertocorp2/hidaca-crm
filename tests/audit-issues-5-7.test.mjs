@@ -10,7 +10,7 @@ const run = promisify(execFile);
 test("unknown routes have a branded Spanish recovery page", async () => {
   const page = await read("../app/not-found.tsx");
   assert.match(page, /Página no encontrada/);
-  assert.match(page, /href=\"\/\"/);
+  assert.match(page, /href=\"\/app\"/);
   assert.match(page, /aria-labelledby=\"not-found-title\"/);
 });
 
@@ -36,6 +36,8 @@ test("dashboard receivables use normalized balances and expose a summary endpoin
   assert.match(financials, /archived_at IS NULL/);
   assert.match(route, /summary.*===.*1/);
   assert.match(route, /totalBalance/);
+  assert.match(route, /normalized_invoice_read_model/);
+  assert.match(route, /balance_amount_snapshot IS NOT NULL/);
   assert.match(page, /getDashboardReceivableBalance/);
   assert.match(client, /initialReceivableBalance/);
   assert.match(client, /\/api\/receivables\?summary=1/);
@@ -50,6 +52,7 @@ test("dashboard receivables preserve imported snapshots without allocations", as
   assert.ok(snapshotBranch > allocationBranch, "snapshot is used after allocation-derived balances");
   assert.ok(paidFallback > snapshotBranch, "paid fallback is evaluated after an explicit snapshot");
   assert.match(financials, /ELSE MAX\(COALESCE\(i\.total_amount, 0\), 0\)/);
+  assert.doesNotMatch(financials, /LIMIT\s+250/);
 });
 
 test("dashboard receivable policy handles snapshots, allocations and paid status", async () => {
