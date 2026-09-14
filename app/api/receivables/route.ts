@@ -125,12 +125,13 @@ export async function GET(request: Request) {
              amount AS totalAmount, MAX(COALESCE(amount, 0) - COALESCE(balance, 0), 0) AS paidAmount,
              0 AS creditedAmount,
              CASE
-               WHEN lower(trim(status)) IN ('cancelado', 'cancelled', 'reemplazado', 'replaced', 'void', 'borrador', 'draft') THEN 0
+               WHEN lower(trim(status)) IN ('cancelado', 'cancelled', 'reemplazado', 'replaced', 'void', 'borrador', 'draft', 'pagado', 'pagada', 'paid') THEN 0
                ELSE MAX(COALESCE(balance, 0), 0)
              END AS balanceAmount,
              CASE
                WHEN lower(trim(status)) IN ('cancelado', 'cancelled', 'reemplazado', 'replaced', 'void') THEN 'cancelled'
                WHEN lower(trim(status)) IN ('borrador', 'draft') THEN 'draft'
+               WHEN lower(trim(status)) IN ('pagado', 'pagada', 'paid') THEN 'paid'
                WHEN MAX(COALESCE(balance, 0), 0) <= 0.005 THEN 'paid'
                WHEN due_date IS NOT NULL AND due_date < ? THEN 'overdue'
                WHEN COALESCE(balance, 0) < COALESCE(amount, 0) THEN 'partial'

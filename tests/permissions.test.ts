@@ -92,6 +92,13 @@ test("permission previews use persisted role defaults from the server", async ()
   assert.match(userEditor, /Permisos actualizados/);
 });
 
+test("admin-only navigation follows each item's permission module", async () => {
+  const client = await readFile("app/app/operations-client.tsx", "utf8");
+  assert.match(client, /if \(item\.adminOnly && currentUser\.role !== "admin"\) return false/);
+  assert.doesNotMatch(client, /item\.adminOnly && !canManageUsers/);
+  assert.match(client, /currentUser\.permissions\[permissionModule\]\.view/);
+});
+
 test("catalog contains every requested module and shared view pairs", () => {
   assert.equal(permissionModules.length, 25);
   assert.deepEqual(permissionModules.find((item) => item.key === "ai")?.actions, ["view", "create", "edit", "approve", "administer"]);

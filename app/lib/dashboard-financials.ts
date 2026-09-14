@@ -32,7 +32,7 @@ export async function getDashboardReceivableBalance() {
          WHERE i.archived_at IS NULL
        ), legacy AS (
          SELECT CASE
-           WHEN LOWER(TRIM(COALESCE(br.status, ''))) IN ('cancelado', 'cancelled', 'reemplazado', 'replaced', 'void', 'borrador', 'draft') THEN 0
+           WHEN LOWER(TRIM(COALESCE(br.status, ''))) IN ('cancelado', 'cancelled', 'reemplazado', 'replaced', 'void', 'borrador', 'draft', 'pagado', 'pagada', 'paid') THEN 0
            ELSE MAX(COALESCE(br.balance, 0), 0)
          END AS balance
          FROM business_records br

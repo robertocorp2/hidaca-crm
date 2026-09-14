@@ -292,9 +292,6 @@ export function OperationsClient({
   const canEcfXml = currentUser.permissions.facturas.ecf_xml;
   const canCreateInvoice = currentUser.permissions.facturas.create;
   const isAdmin = currentUser.role === "admin" && activePermissions.administer;
-  const canManageUsers =
-    currentUser.role === "admin" && currentUser.permissions.usuarios.view;
-
   const refreshReceivableBalance = useCallback(async () => {
     if (
       !invoiceFeatureEnabled ||
@@ -325,8 +322,8 @@ export function OperationsClient({
       ...group,
       items: group.items.filter((item: NavigationItem) => {
         if (item.feature === "invoices" && !invoiceFeatureEnabled) return false;
-        if (item.adminOnly && !canManageUsers) return false;
         const permissionModule = moduleForView(item.view);
+        if (item.adminOnly && currentUser.role !== "admin") return false;
         return (
           !permissionModule || currentUser.permissions[permissionModule].view
         );

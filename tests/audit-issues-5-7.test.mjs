@@ -36,6 +36,7 @@ test("dashboard receivables use normalized balances and expose a summary endpoin
   assert.match(financials, /credit_note_applications/);
   assert.match(financials, /archived_at IS NULL/);
   assert.match(financials, /LOWER\(TRIM\(COALESCE\(br\.status, ''\)\)\) IN \('cancelado', 'cancelled', 'reemplazado', 'replaced'/);
+  assert.match(financials, /'pagado', 'pagada', 'paid'/);
   assert.match(route, /summary.*===.*1/);
   assert.match(route, /totalBalance/);
   assert.match(route, /normalized_invoice_read_model_with_legacy_read_through/);
@@ -66,6 +67,16 @@ test("dashboard receivables preserve imported snapshots without allocations", as
   assert.ok(paidFallback > snapshotBranch, "paid fallback is evaluated after an explicit snapshot");
   assert.match(financials, /ELSE MAX\(COALESCE\(i\.total_amount, 0\), 0\)/);
   assert.doesNotMatch(financials, /LIMIT\s+250/);
+});
+
+test("legacy paid statuses cannot inflate dashboard receivables", async () => {
+  const [financials, route] = await Promise.all([
+    read("../app/lib/dashboard-financials.ts"),
+    read("../app/api/receivables/route.ts"),
+  ]);
+  assert.match(financials, /'pagado', 'pagada', 'paid'\) THEN 0/);
+  assert.match(route, /'pagado', 'pagada', 'paid'\) THEN 0/);
+  assert.match(route, /'pagado', 'pagada', 'paid'\) THEN 'paid'/);
 });
 
 test("dashboard receivable policy handles snapshots, allocations and paid status", async () => {
