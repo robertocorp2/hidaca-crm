@@ -150,6 +150,9 @@ test("status webhooks update campaign recipients and acknowledge stale statuses"
   assert.equal(await updateWhatsAppDeliveryStatus(d1, "wamid-campaign", "delivered", null, options.now), "updated");
   assert.equal(await updateWhatsAppDeliveryStatus(d1, "wamid-campaign", "sent", null, "2026-09-14T04:00:01.000Z"), "already_applied");
   assert.equal(sqlite.prepare("SELECT status FROM whatsapp_campaign_recipients").get()?.status, "delivered");
+  sqlite.prepare("INSERT INTO whatsapp_campaign_recipients(id,meta_message_id,status) VALUES(?,?,?)").run("recipient-2", "wamid-old-attempt", "sending");
+  assert.equal(await updateWhatsAppDeliveryStatus(d1, "wamid-old-attempt", "delivered", null, options.now), "already_applied");
+  assert.equal(sqlite.prepare("SELECT status FROM whatsapp_campaign_recipients WHERE id='recipient-2'").get()?.status, "sending");
   assert.equal(await updateWhatsAppDeliveryStatus(d1, "wamid-unknown", "delivered", null, options.now), "missing");
   sqlite.close();
 });

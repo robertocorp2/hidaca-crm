@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, or } from "drizzle-orm";
 import { getDb } from "../../../../../../db";
 import { whatsappCampaignRecipients, whatsappCampaigns } from "../../../../../../db/schema";
 import { authorizeApi } from "../../../../../lib/authorization";
@@ -13,12 +13,17 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   const [campaign] = await db.select().from(whatsappCampaigns).where(eq(whatsappCampaigns.id, id)).limit(1);
   if (!campaign) return Response.json({ error: "Campaña no encontrada." }, { status: 404 });
   if (campaign.status === "paused") return Response.json({ error: "La campaña está pausada." }, { status: 409 });
-  const recipients = await db.select().from(whatsappCampaignRecipients).where(and(eq(whatsappCampaignRecipients.campaignId, id), inArray(whatsappCampaignRecipients.status, ["queued", "failed"]))).limit(25);
+  const now = new Date().toISOString();
+  const staleSendingBefore = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  await db.update(whatsappCampaignRecipients)
+    .set({ status: "uncertain", error: "El intento de envío expiró; reconcilia el estado en Meta antes de reintentar.", lockedAt: null, updatedAt: now })
+    .where(and(eq(whatsappCampaignRecipients.campaignId, id), eq(whatsappCampaignRecipients.status, "sending"), or(isNull(whatsappCampaignRecipients.lockedAt), lt(whatsappCampaignRecipients.lockedAt, staleSendingBefore))));
+  const recipients = await db.select().from(whatsappCampaignRecipients).where(and(eq(whatsappCampaignRecipients.campaignId, id), or(eq(whatsappCampaignRecipients.status, "queued"), and(eq(whatsappCampaignRecipients.status, "failed"), isNull(whatsappCampaignRecipients.metaMessageId))))).limit(25);
   let sent = 0; let failed = 0;
   for (const recipient of recipients) {
-    const now = new Date().toISOString();
+    const claimedAt = new Date().toISOString();
     const [claimed] = await db.update(whatsappCampaignRecipients)
-      .set({ status: "sending", lockedAt: now, updatedAt: now })
+      .set({ status: "sending", lockedAt: claimedAt, error: null, updatedAt: claimedAt })
       .where(and(eq(whatsappCampaignRecipients.id, recipient.id), inArray(whatsappCampaignRecipients.status, ["queued", "failed"])))
       .returning({ id: whatsappCampaignRecipients.id });
     if (!claimed) continue;
@@ -39,7 +44,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
       if (updated) failed += 1;
     }
   }
-  const remaining = await db.select({ id: whatsappCampaignRecipients.id }).from(whatsappCampaignRecipients).where(and(eq(whatsappCampaignRecipients.campaignId, id), inArray(whatsappCampaignRecipients.status, ["queued", "failed"])));
+  const remaining = await db.select({ id: whatsappCampaignRecipients.id }).from(whatsappCampaignRecipients).where(and(eq(whatsappCampaignRecipients.campaignId, id), inArray(whatsappCampaignRecipients.status, ["queued", "failed", "sending", "uncertain"])));
   await db.update(whatsappCampaigns).set({ status: remaining.length ? "running" : "completed", processed: campaign.processed + sent + failed, sent: campaign.sent + sent, failed: campaign.failed + failed, updatedAt: new Date().toISOString(), finishedAt: remaining.length ? null : new Date().toISOString() }).where(eq(whatsappCampaigns.id, id));
   return Response.json({ ok: true, processed: sent + failed, remaining: remaining.length });
 }

@@ -248,7 +248,9 @@ export async function updateWhatsAppDeliveryStatus(
   if (!(incoming in whatsappStatusRank)) return "already_applied";
   const recipient = await d1.prepare("SELECT status FROM whatsapp_campaign_recipients WHERE meta_message_id=?").bind(metaMessageId).first<{ status: string }>();
   if (!recipient) return "missing";
-  const allStatuses = ["skipped", "queued", "sending", "uncertain", "sent", "delivered", "read", "failed"];
+  // A live campaign send has no durable provider id until Meta accepts it. Do
+  // not let a callback for an older attempt mutate that in-flight row.
+  const allStatuses = ["skipped", "queued", "uncertain", "sent", "delivered", "read", "failed"];
   const incomingRank = whatsappStatusRank[incoming as keyof typeof whatsappStatusRank];
   const allowedStatuses = incoming === "failed" ? allStatuses : allStatuses.filter((status) => campaignStatusRank(status) <= incomingRank);
   const placeholders = allowedStatuses.map(() => "?").join(",");
