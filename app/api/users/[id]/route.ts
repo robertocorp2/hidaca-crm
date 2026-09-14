@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { getD1, getDb } from "../../../../db";
 import { staffUsers } from "../../../../db/schema";
 import { authorizeApi, can, persistedDefaultsForRole, permissionsForStaffUser, resolvePermissionMatrix } from "../../../lib/authorization";
-import { activeEffectiveAdministrators, staffRoles, validateOverrides } from "../../../lib/user-permissions";
+import { activeCapableAdministratorSql, activeEffectiveAdministrators, staffRoles, validateOverrides } from "../../../lib/user-permissions";
 import type { StaffRole } from "../../../lib/modules";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -45,18 +45,26 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
   try {
     const now = new Date().toISOString();
+    const guardToken = `${now}:${crypto.randomUUID()}`;
     const d1 = getD1();
-    await d1.batch([
-      d1.prepare("UPDATE staff_users SET name = ?, email = ?, role = ?, active = ?, updated_at = ? WHERE id = ?")
-        .bind(name, email, role, active ? 1 : 0, now, numericId),
+    const protectsLastAdmin = removesAdmin || removesAdministration;
+    const adminGuard = protectsLastAdmin ? ` AND ${activeCapableAdministratorSql()}` : "";
+    const results = await d1.batch([
+      d1.prepare(`UPDATE staff_users SET name = ?, email = ?, role = ?, active = ?, updated_at = ? WHERE id = ?${adminGuard}`)
+        .bind(name, email, role, active ? 1 : 0, guardToken, numericId, ...(protectsLastAdmin ? [numericId] : [])),
+      d1.prepare("INSERT INTO audit_log (actor_email, action, entity_type, entity_id, detail, created_at) SELECT ?, 'update', 'user', ?, ?, ? WHERE EXISTS (SELECT 1 FROM staff_users WHERE id = ? AND updated_at = ?)")
+        .bind(auth.user.email, id, JSON.stringify({ before: target, after: { name, email, role, active }, permissionOverrides: hasOverrides ? overrides : undefined }), now, numericId, guardToken),
       ...(hasOverrides ? [
-        d1.prepare("DELETE FROM user_permission_overrides WHERE user_id = ?").bind(numericId),
-        ...overrides!.map((item) => d1.prepare("INSERT INTO user_permission_overrides (user_id, module, action, effect) VALUES (?, ?, ?, ?)")
-          .bind(numericId, item.module, item.action, item.effect)),
+        d1.prepare("DELETE FROM user_permission_overrides WHERE user_id = ? AND EXISTS (SELECT 1 FROM staff_users WHERE id = ? AND updated_at = ?)").bind(numericId, numericId, guardToken),
+        ...overrides!.map((item) => d1.prepare("INSERT INTO user_permission_overrides (user_id, module, action, effect) SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM staff_users WHERE id = ? AND updated_at = ?)")
+          .bind(numericId, item.module, item.action, item.effect, numericId, guardToken)),
       ] : []),
-      d1.prepare("INSERT INTO audit_log (actor_email, action, entity_type, entity_id, detail, created_at) VALUES (?, 'update', 'user', ?, ?, ?)")
-        .bind(auth.user.email, id, JSON.stringify({ before: target, after: { name, email, role, active }, permissionOverrides: hasOverrides ? overrides : undefined }), now),
+      d1.prepare("UPDATE staff_users SET updated_at = ? WHERE id = ? AND updated_at = ?")
+        .bind(now, numericId, guardToken),
     ]);
+    if (Number(results[0]?.meta?.changes ?? 0) !== 1) {
+      return Response.json({ error: "Debe permanecer al menos un administrador activo con capacidad de administrar Usuarios." }, { status: 400 });
+    }
     const [user] = await getDb().select().from(staffUsers).where(eq(staffUsers.id, numericId)).limit(1);
     return Response.json({ user, ...(await permissionsForStaffUser(user)) });
   } catch {
@@ -77,10 +85,16 @@ export async function DELETE(_request: Request, context: RouteContext) {
   }
   const d1 = getD1();
   const now = new Date().toISOString();
-  await d1.batch([
-    d1.prepare("DELETE FROM staff_users WHERE id = ?").bind(numericId),
-    d1.prepare("INSERT INTO audit_log (actor_email, action, entity_type, entity_id, detail, created_at) VALUES (?, 'delete', 'user', ?, ?, ?)")
+  const guardToken = `${now}:${crypto.randomUUID()}`;
+  const adminGuard = target.active && target.role === "admin" ? ` AND ${activeCapableAdministratorSql()}` : "";
+  const results = await d1.batch([
+    d1.prepare(`UPDATE staff_users SET updated_at = ? WHERE id = ?${adminGuard}`).bind(guardToken, numericId, ...(adminGuard ? [numericId] : [])),
+    d1.prepare("DELETE FROM staff_users WHERE id = ? AND updated_at = ?").bind(numericId, guardToken),
+    d1.prepare("INSERT INTO audit_log (actor_email, action, entity_type, entity_id, detail, created_at) SELECT ?, 'delete', 'user', ?, ?, ? WHERE changes() = 1")
       .bind(auth.user.email, id, JSON.stringify({ email: target.email, role: target.role }), now),
   ]);
+  if (Number(results[0]?.meta?.changes ?? 0) !== 1) {
+    return Response.json({ error: "Debe permanecer al menos un administrador activo con capacidad de administrar Usuarios." }, { status: 400 });
+  }
   return new Response(null, { status: 204 });
 }
