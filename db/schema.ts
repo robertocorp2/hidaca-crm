@@ -2591,6 +2591,7 @@ export const whatsappCampaignRecipients = sqliteTable("whatsapp_campaign_recipie
   displayName: text("display_name").notNull().default(""),
   status: text("status", { enum: ["queued", "sending", "sent", "delivered", "read", "failed", "uncertain", "skipped"] }).notNull().default("queued"),
   metaMessageId: text("meta_message_id"),
+  deliveryToken: text("delivery_token"),
   error: text("error"),
   attempts: integer("attempts").notNull().default(0),
   lockedAt: text("locked_at"),

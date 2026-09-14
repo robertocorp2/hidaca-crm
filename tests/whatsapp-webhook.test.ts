@@ -49,9 +49,20 @@ function database() {
     );
     CREATE TABLE whatsapp_campaign_recipients (
       id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL,
       meta_message_id TEXT UNIQUE,
+      delivery_token TEXT,
       status TEXT NOT NULL,
       error TEXT
+    );
+    CREATE TABLE whatsapp_campaigns (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      processed INTEGER NOT NULL DEFAULT 0,
+      sent INTEGER NOT NULL DEFAULT 0,
+      failed INTEGER NOT NULL DEFAULT 0,
+      finished_at TEXT,
+      updated_at TEXT NOT NULL
     );
     CREATE TRIGGER whatsapp_messages_inbound_unread_after_insert
     AFTER INSERT ON whatsapp_messages
@@ -74,7 +85,7 @@ function database() {
   return { sqlite, d1: { prepare } as D1Database };
 }
 
-const options = { eventHash: "event-1", eventType: "batch", now: "2026-09-14T04:00:00.000Z", leaseMs: 60_000 };
+const options = { eventHash: "event-1", eventType: "batch", now: "2026-09-14T04:00:00.000Z", leaseMs: 24 * 60 * 60 * 1000 };
 
 test("successful webhook delivery is terminal and a duplicate is a no-op", async () => {
   const { sqlite, d1 } = database();
@@ -146,13 +157,18 @@ test("status webhooks advance atomically and never regress a failed message", as
 
 test("status webhooks update campaign recipients and acknowledge stale statuses", async () => {
   const { sqlite, d1 } = database();
-  sqlite.prepare("INSERT INTO whatsapp_campaign_recipients(id,meta_message_id,status) VALUES(?,?,?)").run("recipient-1", "wamid-campaign", "sent");
+  sqlite.prepare("INSERT INTO whatsapp_campaigns(id,status,updated_at) VALUES(?,?,?)").run("campaign-1", "running", options.now);
+  sqlite.prepare("INSERT INTO whatsapp_campaign_recipients(id,campaign_id,meta_message_id,status) VALUES(?,?,?,?)").run("recipient-1", "campaign-1", "wamid-campaign", "sent");
   assert.equal(await updateWhatsAppDeliveryStatus(d1, "wamid-campaign", "delivered", null, options.now), "updated");
   assert.equal(await updateWhatsAppDeliveryStatus(d1, "wamid-campaign", "sent", null, "2026-09-14T04:00:01.000Z"), "already_applied");
   assert.equal(sqlite.prepare("SELECT status FROM whatsapp_campaign_recipients").get()?.status, "delivered");
-  sqlite.prepare("INSERT INTO whatsapp_campaign_recipients(id,meta_message_id,status) VALUES(?,?,?)").run("recipient-2", "wamid-old-attempt", "sending");
+  sqlite.prepare("INSERT INTO whatsapp_campaign_recipients(id,campaign_id,meta_message_id,status) VALUES(?,?,?,?)").run("recipient-2", "campaign-1", "wamid-old-attempt", "sending");
   assert.equal(await updateWhatsAppDeliveryStatus(d1, "wamid-old-attempt", "delivered", null, options.now), "already_applied");
   assert.equal(sqlite.prepare("SELECT status FROM whatsapp_campaign_recipients WHERE id='recipient-2'").get()?.status, "sending");
+  sqlite.prepare("INSERT INTO whatsapp_campaign_recipients(id,campaign_id,delivery_token,status) VALUES(?,?,?,?)").run("recipient-3", "campaign-1", "recipient-3:1", "uncertain");
+  assert.equal(await updateWhatsAppDeliveryStatus(d1, "", "delivered", null, options.now, undefined, "recipient-3:1"), "updated");
+  assert.equal(sqlite.prepare("SELECT status FROM whatsapp_campaign_recipients WHERE id='recipient-3'").get()?.status, "delivered");
+  assert.deepEqual({ ...sqlite.prepare("SELECT status,processed,sent,failed FROM whatsapp_campaigns WHERE id='campaign-1'").get() }, { status: "running", processed: 2, sent: 2, failed: 0 });
   assert.equal(await updateWhatsAppDeliveryStatus(d1, "wamid-unknown", "delivered", null, options.now), "missing");
   sqlite.close();
 });
@@ -175,6 +191,32 @@ test("stale webhook claims cannot persist inbound side effects", async () => {
     claim: { eventHash: options.eventHash, attemptCount: 1 },
   }), /WHATSAPP_WEBHOOK_STALE_CLAIM/);
   assert.equal(sqlite.prepare("SELECT count(*) AS count FROM whatsapp_messages").get()?.count, 0);
+  sqlite.close();
+});
+
+test("expired webhook leases reject side effects before completion", async () => {
+  const { sqlite, d1 } = database();
+  sqlite.prepare("INSERT INTO whatsapp_conversations(id,updated_at) VALUES(?,?)").run("conversation-1", new Date().toISOString());
+  const leaseOptions = { ...options, eventHash: "event-expired", now: new Date().toISOString(), leaseMs: 5 };
+  await assert.rejects(runWhatsAppWebhookDelivery(d1, leaseOptions, async (claim) => {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await assert.rejects(persistInboundWhatsAppMessage(d1, {
+      id: "message-expired",
+      conversationId: "conversation-1",
+      metaMessageId: "wamid-expired",
+      type: "text",
+      body: "No debe persistir",
+      caption: "",
+      mediaId: null,
+      mediaKey: null,
+      contentType: null,
+      now: leaseOptions.now,
+      claim,
+    }), /WHATSAPP_WEBHOOK_STALE_CLAIM/);
+    return "stale";
+  }));
+  assert.equal(sqlite.prepare("SELECT count(*) AS count FROM whatsapp_messages").get()?.count, 0);
+  assert.equal(sqlite.prepare("SELECT processing_status FROM whatsapp_webhook_events WHERE event_hash='event-expired'").get()?.processing_status, "processing");
   sqlite.close();
 });
 

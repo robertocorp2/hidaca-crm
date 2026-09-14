@@ -2,6 +2,7 @@ ALTER TABLE `whatsapp_webhook_events` ADD `attempt_count` integer DEFAULT 0 NOT 
 ALTER TABLE `whatsapp_webhook_events` ADD `last_attempt_at` text;--> statement-breakpoint
 ALTER TABLE `whatsapp_webhook_events` ADD `processing_started_at` text;--> statement-breakpoint
 ALTER TABLE `whatsapp_webhook_events` ADD `lease_until` text;--> statement-breakpoint
+ALTER TABLE `whatsapp_campaign_recipients` ADD `delivery_token` text;--> statement-breakpoint
 CREATE INDEX `whatsapp_webhook_events_processing_idx` ON `whatsapp_webhook_events` (`processing_status`,`lease_until`);--> statement-breakpoint
 UPDATE `whatsapp_webhook_events`
 SET processing_status = 'failed', processed_at = NULL,
@@ -27,7 +28,9 @@ SET unread_count = CASE WHEN unread_count <
 WHERE EXISTS (
   SELECT 1
   FROM `whatsapp_messages` AS m
-  JOIN `whatsapp_webhook_events` AS e ON e.meta_message_id = m.meta_message_id OR (e.meta_message_id IS NULL AND e.received_at = m.created_at)
+  JOIN `whatsapp_webhook_events` AS e ON (e.meta_message_id IS NOT NULL AND e.meta_message_id = m.meta_message_id)
+    OR (e.meta_message_id IS NULL AND e.received_at = m.created_at
+      AND (SELECT COUNT(*) FROM `whatsapp_webhook_events` AS e2 WHERE e2.processing_status = 'failed' AND e2.meta_message_id IS NULL AND e2.received_at = e.received_at) = 1)
   WHERE m.conversation_id = c.id
     AND m.direction = 'inbound'
     AND e.processing_status = 'failed'

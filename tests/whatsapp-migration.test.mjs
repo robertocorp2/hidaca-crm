@@ -18,6 +18,7 @@ test("webhook migration makes legacy completion policy explicit and installs ato
     );
     CREATE TABLE whatsapp_conversations (id TEXT PRIMARY KEY, unread_count INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE whatsapp_conversation_reads (conversation_id TEXT NOT NULL, last_read_at TEXT NOT NULL);
+    CREATE TABLE whatsapp_campaign_recipients (id TEXT PRIMARY KEY);
     CREATE TABLE whatsapp_messages (
       id TEXT PRIMARY KEY,
       conversation_id TEXT NOT NULL,
@@ -32,7 +33,7 @@ test("webhook migration makes legacy completion policy explicit and installs ato
       content_type TEXT,
       created_at TEXT NOT NULL
     );
-    INSERT INTO whatsapp_webhook_events(event_hash,event_type,meta_message_id,processing_status,received_at) VALUES('legacy-partial','batch','wamid-1','processed','2026-09-14T04:00:00.000Z');
+    INSERT INTO whatsapp_webhook_events(event_hash,event_type,processing_status,received_at) VALUES('legacy-partial','batch','processed','2026-09-14T04:00:00.000Z');
     INSERT INTO whatsapp_webhook_events(event_hash,event_type,processing_status,received_at) VALUES('legacy-ignored','batch','ignored','2026-09-14T04:00:00.000Z');
     INSERT INTO whatsapp_conversations(id,unread_count) VALUES('conversation-1',0);
     INSERT INTO whatsapp_messages(id,conversation_id,meta_message_id,direction,type,body,caption,status,created_at) VALUES('message-1','conversation-1','wamid-1','inbound','text','Hola','', 'received', '2026-09-14T04:00:00.000Z');

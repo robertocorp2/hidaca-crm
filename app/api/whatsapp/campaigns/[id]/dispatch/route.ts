@@ -2,6 +2,8 @@ import { and, eq, inArray, isNull, lt, or } from "drizzle-orm";
 import { getDb } from "../../../../../../db";
 import { whatsappCampaignRecipients, whatsappCampaigns } from "../../../../../../db/schema";
 import { authorizeApi } from "../../../../../lib/authorization";
+import { refreshWhatsAppCampaignSummary } from "../../../../../lib/whatsapp-webhook";
+import { getD1 } from "../../../../../../db";
 import { isWhatsAppCampaignsEnabled, sendWhatsAppMessage } from "../../../../../lib/whatsapp";
 
 export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -23,14 +25,22 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   for (const recipient of recipients) {
     const claimedAt = new Date().toISOString();
     const [claimed] = await db.update(whatsappCampaignRecipients)
-      .set({ status: "sending", lockedAt: claimedAt, error: null, updatedAt: claimedAt })
+      .set({ status: "sending", lockedAt: claimedAt, deliveryToken: `${recipient.id}:${recipient.attempts + 1}`, error: null, updatedAt: claimedAt })
       .where(and(eq(whatsappCampaignRecipients.id, recipient.id), inArray(whatsappCampaignRecipients.status, ["queued", "failed"])))
       .returning({ id: whatsappCampaignRecipients.id });
     if (!claimed) continue;
     try {
-      const result = await sendWhatsAppMessage(recipient.phone, { type: "template", template: { name: campaign.templateName, language: { code: campaign.templateLanguage } } });
+      const deliveryToken = `${recipient.id}:${recipient.attempts + 1}`;
+      const result = await sendWhatsAppMessage(recipient.phone, { type: "template", template: { name: campaign.templateName, language: { code: campaign.templateLanguage } }, biz_opaque_callback_data: deliveryToken });
+      const metaMessageId = result.messages?.[0]?.id?.trim();
+      if (!metaMessageId) {
+        await db.update(whatsappCampaignRecipients)
+          .set({ status: "uncertain", error: "Meta aceptó una respuesta sin ID de mensaje; reconcilia el callback antes de reintentar.", attempts: recipient.attempts + 1, lockedAt: null, updatedAt: new Date().toISOString() })
+          .where(and(eq(whatsappCampaignRecipients.id, recipient.id), eq(whatsappCampaignRecipients.status, "sending")));
+        continue;
+      }
       const [updated] = await db.update(whatsappCampaignRecipients)
-        .set({ status: "sent", metaMessageId: result.messages?.[0]?.id ?? null, attempts: recipient.attempts + 1, lockedAt: null, updatedAt: new Date().toISOString() })
+        .set({ status: "sent", metaMessageId, attempts: recipient.attempts + 1, lockedAt: null, updatedAt: new Date().toISOString() })
         .where(and(eq(whatsappCampaignRecipients.id, recipient.id), eq(whatsappCampaignRecipients.status, "sending")))
         .returning({ id: whatsappCampaignRecipients.id });
       if (updated) sent += 1;
@@ -44,7 +54,6 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
       if (updated) failed += 1;
     }
   }
-  const remaining = await db.select({ id: whatsappCampaignRecipients.id }).from(whatsappCampaignRecipients).where(and(eq(whatsappCampaignRecipients.campaignId, id), inArray(whatsappCampaignRecipients.status, ["queued", "failed", "sending", "uncertain"])));
-  await db.update(whatsappCampaigns).set({ status: remaining.length ? "running" : "completed", processed: campaign.processed + sent + failed, sent: campaign.sent + sent, failed: campaign.failed + failed, updatedAt: new Date().toISOString(), finishedAt: remaining.length ? null : new Date().toISOString() }).where(eq(whatsappCampaigns.id, id));
-  return Response.json({ ok: true, processed: sent + failed, remaining: remaining.length });
+  const summary = await refreshWhatsAppCampaignSummary(getD1(), id, new Date().toISOString());
+  return Response.json({ ok: true, processed: summary?.processed ?? sent + failed, remaining: summary?.active ?? 0 });
 }
