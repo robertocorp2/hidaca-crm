@@ -53,13 +53,13 @@ export async function POST(request: Request) {
           const fallbackMessageId = message.id
             ? String(message.id)
             : legacyReplay
-              ? `legacy:${eventHash}`
+              ? ""
               : `${await hashBody(messageIdentity)}-${occurrence}`;
           if (mediaId && ["image", "document", "audio", "video"].includes(type)) {
             if (!env.FILES) throw new Error("WHATSAPP_MEDIA_STORAGE_UNAVAILABLE");
             if (!(await renewWhatsAppWebhookClaim(d1, claim, new Date().toISOString()))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
             const media = await downloadMetaMedia(mediaId);
-            const mediaPart = String(message.id ?? `event-${fallbackMessageId}`).replace(/[^a-zA-Z0-9_.-]/g, "_");
+            const mediaPart = String(message.id ?? (legacyReplay ? `event-${eventHash}-${occurrence}` : `event-${fallbackMessageId}`)).replace(/[^a-zA-Z0-9_.-]/g, "_");
             mediaKey = `whatsapp/${conversationId}/${mediaPart}`;
             contentType = media.contentType;
             if (!(await renewWhatsAppWebhookClaim(d1, claim, new Date().toISOString()))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
@@ -69,7 +69,7 @@ export async function POST(request: Request) {
           await persistInboundWhatsAppMessage(d1, {
             id: crypto.randomUUID(),
             conversationId,
-            metaMessageId: message.id ? String(message.id) : `hidaca:${fallbackMessageId}`,
+            metaMessageId: message.id ? String(message.id) : legacyReplay ? "" : `hidaca:${fallbackMessageId}`,
             type: ["text", "image", "document", "audio", "video", "sticker", "location"].includes(type) ? type : "unsupported",
             body: content?.body ?? "",
             caption: content?.caption ?? "",

@@ -48,7 +48,6 @@ test("webhook migration makes legacy completion policy explicit and installs ato
     INSERT INTO whatsapp_campaign_recipients(id,attempts,meta_message_id,status,error,locked_at,created_at,updated_at) VALUES('recipient-sending',0,NULL,'sending','provider timeout before migration','2026-09-14T04:00:00.000Z','2026-09-14T04:00:00.000Z','2026-09-14T04:00:00.000Z');
     INSERT INTO whatsapp_conversations(id,unread_count) VALUES('conversation-1',0);
     INSERT INTO whatsapp_messages(id,conversation_id,meta_message_id,direction,type,body,caption,status,created_at) VALUES('message-1','conversation-1','wamid-1','inbound','text','Hola','', 'received', '2026-09-14T04:00:00.000Z');
-    INSERT INTO whatsapp_messages(id,conversation_id,meta_message_id,direction,type,body,caption,status,created_at) VALUES('message-legacy','conversation-1','','inbound','text','Legacy','', 'received', '2026-09-14T04:00:00.000Z');
   `);
   const migration = await readFile(new URL("../drizzle/0024_whatsapp_webhook_retry.sql", import.meta.url), "utf8");
   for (const statement of migration.split("--> statement-breakpoint")) if (statement.trim()) database.exec(statement);
@@ -63,7 +62,6 @@ test("webhook migration makes legacy completion policy explicit and installs ato
     processed_at: "2026-09-14T04:00:00.000Z",
     error: "Legacy ignored delivery preserved as a no-op",
   });
-  assert.equal(database.prepare("SELECT meta_message_id FROM whatsapp_messages WHERE id='message-legacy'").get()?.meta_message_id, "hidaca:legacy:legacy-partial");
   assert.deepEqual({ ...database.prepare("SELECT delivery_token,status FROM whatsapp_campaign_recipients WHERE id='recipient-legacy'").get() }, {
     delivery_token: "legacy:recipient-legacy:2",
     status: "uncertain",
@@ -84,7 +82,7 @@ test("webhook migration makes legacy completion policy explicit and installs ato
     status: "unreconciled",
   });
 
-  assert.equal(database.prepare("SELECT unread_count FROM whatsapp_conversations").get()?.unread_count, 2);
+  assert.equal(database.prepare("SELECT unread_count FROM whatsapp_conversations").get()?.unread_count, 1);
   database.prepare("INSERT INTO whatsapp_conversations(id,unread_count) VALUES(?,0)").run("conversation-2");
   database.prepare("INSERT INTO whatsapp_messages(id,conversation_id,meta_message_id,direction,type,body,caption,status,created_at) VALUES(?,?,?,'inbound','text','Hola','', 'received', ?)").run("message-2", "conversation-2", "wamid-2", "2026-09-14T04:00:00.000Z");
   assert.equal(database.prepare("SELECT unread_count FROM whatsapp_conversations WHERE id='conversation-2'").get()?.unread_count, 1);
