@@ -10,7 +10,7 @@ export async function GET() {
   if (!auth.ok) return auth.response;
   const rows = await getDb().select().from(staffUsers).orderBy(asc(staffUsers.name));
   const users = await Promise.all(rows.map(async (user) => ({ ...user, ...(await permissionsForStaffUser(user)) })));
-  return Response.json({ users, ...permissionCatalog() });
+  return Response.json({ users, ...(await permissionCatalog()) });
 }
 
 export async function POST(request: Request) {

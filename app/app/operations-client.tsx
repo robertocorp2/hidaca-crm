@@ -292,9 +292,6 @@ export function OperationsClient({
   const canEcfXml = currentUser.permissions.facturas.ecf_xml;
   const canCreateInvoice = currentUser.permissions.facturas.create;
   const isAdmin = currentUser.role === "admin" && activePermissions.administer;
-  const canManageUsers =
-    currentUser.role === "admin" && currentUser.permissions.usuarios.view;
-
   const refreshReceivableBalance = useCallback(async () => {
     if (
       !invoiceFeatureEnabled ||
@@ -313,7 +310,10 @@ export function OperationsClient({
   }, [currentUser.permissions, invoiceFeatureEnabled]);
 
   useEffect(() => {
-    if (view === "resumen") void refreshReceivableBalance();
+    if (view !== "resumen") return;
+    void (async () => {
+      await refreshReceivableBalance();
+    })();
   }, [refreshReceivableBalance, view]);
   const visibleNavigationGroups = (
     navigationGroups as readonly NavigationGroup[]
@@ -322,8 +322,8 @@ export function OperationsClient({
       ...group,
       items: group.items.filter((item: NavigationItem) => {
         if (item.feature === "invoices" && !invoiceFeatureEnabled) return false;
-        if (item.adminOnly && !canManageUsers) return false;
         const permissionModule = moduleForView(item.view);
+        if (item.adminOnly && currentUser.role !== "admin") return false;
         return (
           !permissionModule || currentUser.permissions[permissionModule].view
         );
@@ -449,10 +449,7 @@ export function OperationsClient({
           !["Completado", "Cancelado"].includes(record.status),
       ).length,
       receivable:
-        receivableBalance ??
-        records
-          .filter((record) => record.module === "facturas")
-          .reduce((sum, record) => sum + record.balance, 0),
+        receivableBalance ?? 0,
       leads: leads.filter(
         (lead) => !["converted", "unqualified"].includes(lead.status),
       ).length,
@@ -725,7 +722,6 @@ export function OperationsClient({
     setShowForm(false);
     setEditing(null);
     setMessage("Registro guardado.");
-    if (view === "resumen") void refreshReceivableBalance();
   }
 
   async function archiveRecord(record: RecordRow) {
@@ -1063,6 +1059,7 @@ export function OperationsClient({
                 records={records}
                 totals={totals}
                 initialNow={initialNow}
+                invoiceFeatureEnabled={invoiceFeatureEnabled}
                 onNavigate={(next, record) => {
                   if (record) applySelection(next, record);
                   else selectView(next);
@@ -1742,6 +1739,7 @@ function Dashboard({
   businesses,
   onNavigate,
   initialNow,
+  invoiceFeatureEnabled,
 }: {
   totals: {
     projects: number;
@@ -1759,7 +1757,11 @@ function Dashboard({
   businesses: BusinessRow[];
   onNavigate(view: View, record?: string): void;
   initialNow: number;
+  invoiceFeatureEnabled: boolean;
 }) {
+  const permissions = useContext(PermissionContext);
+  const canViewReceivables = permissions?.["cuentas-cobrar"]?.view ?? false;
+  const canOpenReceivables = invoiceFeatureEnabled && canViewReceivables;
   const upcomingActivities = activities
     .filter(
       (activity) =>
@@ -1863,10 +1865,10 @@ function Dashboard({
           <strong>{totals.projects}</strong>
           <small>En ejecución o seguimiento</small>
         </DashboardLink>
-        <DashboardLink
+        {canViewReceivables && (canOpenReceivables ? <DashboardLink
           className="metric-card metric-card-currency"
-          href={viewHref("facturas")}
-          onNavigate={() => onNavigate("facturas")}
+          href={viewHref("receivables")}
+          onNavigate={() => onNavigate("receivables")}
         >
           <span className="metric-heading">
             <span className="metric-icon" aria-hidden="true">
@@ -1879,6 +1881,18 @@ function Dashboard({
           </strong>
           <small>Facturas con balance pendiente</small>
         </DashboardLink>
+        : <article className="metric-card metric-card-currency" aria-label="Balance por cobrar">
+          <span className="metric-heading">
+            <span className="metric-icon" aria-hidden="true">
+              RD$
+            </span>
+            <span>Balance por cobrar</span>
+          </span>
+          <strong title={money(totals.receivable)}>
+            {money(totals.receivable)}
+          </strong>
+          <small>Facturas con balance pendiente</small>
+        </article>)}
       </section>
       <section className="dashboard-grid">
         <article className="panel">

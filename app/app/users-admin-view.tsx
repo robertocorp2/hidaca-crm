@@ -3,6 +3,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import {
   permissionModules,
+  rolePermissionDefaults,
   resolveEffectivePermissions,
   type EffectivePermissions,
   type PermissionAction,
@@ -26,11 +27,27 @@ import {
 } from "./ui";
 
 type Override = { module: PermissionModuleKey; action: PermissionAction; effect: PermissionEffect };
-type PermissionPayload = { overrides: Override[]; permissions: EffectivePermissions };
-type Editor = { user: StaffUser | null; name: string; email: string; role: StaffRole; active: boolean; overrides: Override[]; permissions: EffectivePermissions };
+type PermissionDefault = { module: string; action: string; allowed: boolean };
+type RoleDefaults = Record<StaffRole, PermissionDefault[]>;
+type PermissionPayload = { defaults: PermissionDefault[]; overrides: Override[]; permissions: EffectivePermissions; persistedRoleDefaults?: RoleDefaults };
+type Editor = { user: StaffUser | null; name: string; email: string; role: StaffRole; active: boolean; defaults: PermissionDefault[]; roleDefaults: RoleDefaults; overrides: Override[]; permissions: EffectivePermissions };
 
-function effectivePreview(role: StaffRole, overrides: Override[]): EffectivePermissions {
-  return resolveEffectivePermissions(role, [], overrides);
+function effectivePreview(role: StaffRole, defaults: PermissionDefault[], overrides: Override[]): EffectivePermissions {
+  return resolveEffectivePermissions(role, defaults, overrides);
+}
+
+function builtInDefaults(role: StaffRole): PermissionDefault[] {
+  return Object.entries(rolePermissionDefaults[role]).flatMap(([module, actions]) =>
+    Object.entries(actions).map(([action, allowed]) => ({ module, action, allowed })),
+  );
+}
+
+function roleDefaultsFrom(payload: PermissionPayload): RoleDefaults {
+  const persisted: Partial<RoleDefaults> = payload.persistedRoleDefaults ?? {};
+  return Object.fromEntries((["admin", "operator", "viewer"] as StaffRole[]).map((role) => [
+    role,
+    persisted[role]?.length ? persisted[role] : builtInDefaults(role),
+  ])) as RoleDefaults;
 }
 
 function roleLabel(role: StaffRole) {
@@ -64,24 +81,35 @@ export function UsersAdminView({
       const response = await fetch(`/api/users/${user.id}/permissions`);
       const result = (await response.json()) as PermissionPayload & { error?: string };
       if (!response.ok) throw new Error(result.error);
-      setEditor({ user, name: user.name, email: user.email, role: user.role, active: user.active, ...result });
+      setEditor({ user, name: user.name, email: user.email, role: user.role, active: user.active, defaults: result.defaults, roleDefaults: roleDefaultsFrom(result), overrides: result.overrides, permissions: result.permissions });
       setTab("general");
     } catch (error) {
       setMessage(error instanceof Error && error.message ? error.message : "No se pudieron cargar los permisos.");
     } finally { setBusy(false); }
   }
 
-  function openNew() {
+  async function openNew() {
+    setBusy(true);
+    setMessage("");
     const role: StaffRole = "operator";
-    setEditor({ user: null, name: "", email: "", role, active: true, overrides: [], permissions: effectivePreview(role, []) });
-    setTab("general");
+    try {
+      const response = await fetch("/api/users/permissions");
+      const result = (await response.json()) as PermissionPayload & { error?: string };
+      if (!response.ok) throw new Error(result.error);
+      const roleDefaults = roleDefaultsFrom(result);
+      const defaults = roleDefaults[role];
+      setEditor({ user: null, name: "", email: "", role, active: true, defaults, roleDefaults, overrides: [], permissions: effectivePreview(role, defaults, []) });
+      setTab("general");
+    } catch (error) {
+      setMessage(error instanceof Error && error.message ? error.message : "No se pudieron cargar los permisos iniciales.");
+    } finally { setBusy(false); }
   }
 
   function setOverride(moduleKey: PermissionModuleKey, action: PermissionAction, effect: "inherit" | PermissionEffect) {
     if (!editor) return;
     const next = editor.overrides.filter((item) => item.module !== moduleKey || item.action !== action);
     if (effect !== "inherit") next.push({ module: moduleKey, action, effect });
-    setEditor({ ...editor, overrides: next, permissions: effectivePreview(editor.role, next) });
+    setEditor({ ...editor, overrides: next, permissions: effectivePreview(editor.role, editor.defaults, next) });
   }
 
   function applyPreset(kind: "reset" | "all" | "readonly" | "none") {
@@ -95,7 +123,7 @@ export function UsersAdminView({
         permissionModule.actions.map((action) => ({ module: permissionModule.key, action, effect: action === "view" ? "allow" as const : "deny" as const })));
       if (kind === "none") next = permissionModules.flatMap((permissionModule) =>
         permissionModule.actions.map((action) => ({ module: permissionModule.key, action, effect: "deny" as const })));
-      setEditor({ ...editor, overrides: next, permissions: effectivePreview(editor.role, next) });
+      setEditor({ ...editor, overrides: next, permissions: effectivePreview(editor.role, editor.defaults, next) });
     };
     confirm("Este preset reemplazará la personalización actual. Podrás revisar el resultado antes de guardar.", "Aplicar preset", action);
   }
@@ -133,7 +161,7 @@ export function UsersAdminView({
           if (!permissions.ok) throw new Error(permissionResult.error);
         }
         setUsers((current) => current.map((item) => item.id === savedUser.id ? savedUser : item));
-        setMessage("Usuario y permisos actualizados.");
+        setMessage(access.edit ? "Usuario y permisos actualizados." : "Permisos actualizados.");
       }
       setEditor(null);
     } catch (error) {
@@ -172,7 +200,7 @@ export function UsersAdminView({
         {/* The export endpoint returns a downloadable JSON backup rather than an application page. */}
         {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
         <a className="secondary-button" href="/api/users/export">Exportar seguridad</a>
-      </>}{access.create && <button className="primary-button" onClick={openNew} type="button">+ Autorizar usuario</button>}</div>} description="Administra el acceso y los permisos efectivos por módulo." eyebrow="Seguridad" title="Usuarios autorizados" />
+      </>}{access.create && <button className="primary-button" onClick={() => void openNew()} type="button">+ Autorizar usuario</button>}</div>} description="Administra el acceso y los permisos efectivos por módulo." eyebrow="Seguridad" title="Usuarios autorizados" />
     <div className="toolbar toolbar-filters">
       <AutocompleteInput ariaLabel="Buscar usuarios" onChange={(value) => { setListQuery(value); setPage(1); }} onSelect={(option) => { setListQuery(option.label); setPage(1); }} options={filteredUsers.slice(0, 8).map((user) => ({ id: String(user.id), label: user.name, secondary: user.email }))} placeholder="Escribe un nombre o correo…" value={listQuery} />
       <select aria-label="Filtrar usuarios por rol" onChange={(event) => { setRoleFilter(event.target.value); setPage(1); }} value={roleFilter}><option value="">Todos los roles</option><option value="admin">Administrador</option><option value="operator">Operador</option><option value="viewer">Solo lectura</option></select>
@@ -192,10 +220,10 @@ export function UsersAdminView({
       <form className="user-editor" onSubmit={save}>
         <div className="user-tabs" role="tablist"><button aria-selected={tab === "general"} onClick={() => setTab("general")} role="tab" type="button">General</button>{access.administer && <button aria-selected={tab === "permissions"} onClick={() => setTab("permissions")} role="tab" type="button">Permisos</button>}</div>
         {tab === "general" ? <div className="user-general-grid">
-          <label htmlFor="user-editor-name">Nombre<input autoComplete="name" id="user-editor-name" name="name" required value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} /></label>
-          <label htmlFor="user-editor-email">Correo de ChatGPT<input autoComplete="email" disabled={self} id="user-editor-email" name="email" required type="email" value={editor.email} onChange={(event) => setEditor({ ...editor, email: event.target.value })} /></label>
-          <label htmlFor="user-editor-role">Rol<select autoComplete="off" disabled={self} id="user-editor-role" name="role" value={editor.role} onChange={(event) => { const role = event.target.value as StaffRole; setEditor({ ...editor, role, permissions: effectivePreview(role, editor.overrides) }); }}><option value="admin">Administrador</option><option value="operator">Operador</option><option value="viewer">Solo lectura</option></select></label>
-          <label htmlFor="user-editor-status">Estado<select autoComplete="off" disabled={self} id="user-editor-status" name="status" value={editor.active ? "active" : "inactive"} onChange={(event) => {
+          <label htmlFor="user-editor-name">Nombre<input autoComplete="name" disabled={self || !access.edit} id="user-editor-name" name="name" required value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} /></label>
+          <label htmlFor="user-editor-email">Correo de ChatGPT<input autoComplete="email" disabled={self || !access.edit} id="user-editor-email" name="email" required type="email" value={editor.email} onChange={(event) => setEditor({ ...editor, email: event.target.value })} /></label>
+          <label htmlFor="user-editor-role">Rol<select autoComplete="off" disabled={self || !access.edit} id="user-editor-role" name="role" value={editor.role} onChange={(event) => { const role = event.target.value as StaffRole; const defaults = editor.roleDefaults[role]; setEditor({ ...editor, role, defaults, permissions: effectivePreview(role, defaults, editor.overrides) }); }}><option value="admin">Administrador</option><option value="operator">Operador</option><option value="viewer">Solo lectura</option></select></label>
+          <label htmlFor="user-editor-status">Estado<select autoComplete="off" disabled={self || !access.edit} id="user-editor-status" name="status" value={editor.active ? "active" : "inactive"} onChange={(event) => {
             const active = event.target.value === "active";
             if (!active && editor.active) {
               confirm("Al desactivar este usuario perderá acceso a HIDACA de inmediato al guardar los cambios.", "Desactivar", async () => setEditor((current) => current ? { ...current, active: false } : current));
@@ -207,10 +235,10 @@ export function UsersAdminView({
           <div className="permission-tools"><input aria-label="Buscar módulos" autoComplete="off" name="permissionSearch" onChange={(event) => setQuery(event.target.value)} placeholder="Buscar módulos…" value={query} /><div><button onClick={() => applyPreset("reset")} type="button">Restablecer rol</button><button onClick={() => applyPreset("all")} type="button">Permitir todos</button><button onClick={() => applyPreset("readonly")} type="button">Solo lectura</button><button onClick={() => applyPreset("none")} type="button">Quitar todos</button></div></div>
           <div className="permission-groups">{filteredModules.map((module) => {
             const requiredBy = permissionModules.filter((item) => item.dependencies.includes(module.key as never) && editor.permissions[item.key].view).map((item) => item.label);
-            const locked = requiredBy.length > 0;
+            const unmet = requiredBy.length > 0 && !editor.permissions[module.key].view;
             const viewOverride = editor.overrides.find((item) => item.module === module.key && item.action === "view")?.effect ?? "inherit";
-            return <article key={module.key}><div className="permission-row"><span><small>{module.group}</small><strong>{module.label}</strong>{locked && <em>Requerido por {requiredBy.join(", ")}</em>}</span><label className="permission-toggle"><input checked={editor.permissions[module.key].view} disabled={self || locked || module.key === "usuarios" && editor.role !== "admin"} name={`permission-${module.key}-view`} onChange={(event) => setOverride(module.key, "view", event.target.checked ? "allow" : "deny")} type="checkbox" /> Acceso</label><button aria-expanded={expanded === module.key} onClick={() => setExpanded(expanded === module.key ? null : module.key)} type="button">CRUD</button></div>
-              {expanded === module.key && <div className="permission-actions">{module.actions.map((action) => <label key={action}><span>{action === "view" ? "Ver" : action === "create" ? "Crear" : action === "edit" ? "Editar" : action === "approve" ? "Aprobar" : action === "delete" ? "Eliminar" : "Administrar"}<small>{editor.permissions[module.key][action] ? "Efectivo: permitido" : "Efectivo: denegado"}</small></span><select disabled={self || locked || module.key === "usuarios" && editor.role !== "admin"} name={`permission-${module.key}-${action}`} onChange={(event) => setOverride(module.key, action, event.target.value as "inherit" | PermissionEffect)} value={action === "view" ? viewOverride : editor.overrides.find((item) => item.module === module.key && item.action === action)?.effect ?? "inherit"}><option value="inherit">Heredar</option><option value="allow">Permitir</option><option value="deny">Denegar</option></select></label>)}</div>}</article>;
+            return <article key={module.key}><div className="permission-row"><span><small>{module.group}</small><strong>{module.label}</strong>{requiredBy.length > 0 && <em>Requerido por {requiredBy.join(", ")}</em>}{unmet && <em className="inline-warning">Prerequisito denegado: revisa {requiredBy.join(", ")} antes de autorizar este módulo.</em>}</span><label className="permission-toggle"><input checked={editor.permissions[module.key].view} disabled={self || module.key === "usuarios" && editor.role !== "admin"} name={`permission-${module.key}-view`} onChange={(event) => setOverride(module.key, "view", event.target.checked ? "allow" : "deny")} type="checkbox" /> Acceso</label><button aria-expanded={expanded === module.key} onClick={() => setExpanded(expanded === module.key ? null : module.key)} type="button">CRUD</button></div>
+              {expanded === module.key && <div className="permission-actions">{module.actions.map((action) => <label key={action}><span>{action === "view" ? "Ver" : action === "create" ? "Crear" : action === "edit" ? "Editar" : action === "approve" ? "Aprobar" : action === "delete" ? "Eliminar" : "Administrar"}<small>{editor.permissions[module.key][action] ? "Efectivo: permitido" : "Efectivo: denegado"}</small></span><select disabled={self || module.key === "usuarios" && editor.role !== "admin"} name={`permission-${module.key}-${action}`} onChange={(event) => setOverride(module.key, action, event.target.value as "inherit" | PermissionEffect)} value={action === "view" ? viewOverride : editor.overrides.find((item) => item.module === module.key && item.action === action)?.effect ?? "inherit"}><option value="inherit">Heredar</option><option value="allow">Permitir</option><option value="deny">Denegar</option></select></label>)}</div>}</article>;
           })}</div>
         </div>}
         <div className="modal-actions"><button className="secondary-button" onClick={() => setEditor(null)} type="button">Cancelar</button>{editor.user && !self && access.delete && <button className="danger-link" onClick={() => remove(editor.user!)} type="button">Eliminar usuario</button>}{(!editor.user && access.create || editor.user && (access.edit || access.administer)) && <button className="primary-button" disabled={busy || self && tab === "permissions"}>{busy ? "Guardando…" : "Guardar cambios"}</button>}</div>
