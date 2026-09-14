@@ -3,6 +3,20 @@ ALTER TABLE `whatsapp_webhook_events` ADD `last_attempt_at` text;--> statement-b
 ALTER TABLE `whatsapp_webhook_events` ADD `processing_started_at` text;--> statement-breakpoint
 ALTER TABLE `whatsapp_webhook_events` ADD `lease_until` text;--> statement-breakpoint
 ALTER TABLE `whatsapp_campaign_recipients` ADD `delivery_token` text;--> statement-breakpoint
+CREATE TABLE `whatsapp_campaign_delivery_attempts` (
+  `id` text PRIMARY KEY NOT NULL,
+  `recipient_id` text NOT NULL,
+  `delivery_token` text NOT NULL,
+  `meta_message_id` text,
+  `status` text NOT NULL,
+  `error` text,
+  `created_at` text NOT NULL,
+  `updated_at` text NOT NULL,
+  FOREIGN KEY (`recipient_id`) REFERENCES `whatsapp_campaign_recipients`(`id`) ON UPDATE no action ON DELETE cascade
+);--> statement-breakpoint
+CREATE UNIQUE INDEX `whatsapp_campaign_delivery_attempts_token_unique` ON `whatsapp_campaign_delivery_attempts` (`delivery_token`);--> statement-breakpoint
+CREATE UNIQUE INDEX `whatsapp_campaign_delivery_attempts_meta_unique` ON `whatsapp_campaign_delivery_attempts` (`meta_message_id`);--> statement-breakpoint
+CREATE INDEX `whatsapp_campaign_delivery_attempts_recipient_idx` ON `whatsapp_campaign_delivery_attempts` (`recipient_id`);--> statement-breakpoint
 CREATE INDEX `whatsapp_webhook_events_processing_idx` ON `whatsapp_webhook_events` (`processing_status`,`lease_until`);--> statement-breakpoint
 UPDATE `whatsapp_webhook_events`
 SET processing_status = 'failed', processed_at = NULL,

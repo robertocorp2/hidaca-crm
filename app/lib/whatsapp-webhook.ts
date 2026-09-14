@@ -204,28 +204,39 @@ function campaignStatusRank(status: string) {
 }
 
 export async function refreshWhatsAppCampaignSummary(d1: D1Database, campaignId: string, now: string, claim?: WhatsAppWebhookClaim) {
-  const summary = await d1
-    .prepare(
-      `SELECT
-         COUNT(*) AS total,
-         COALESCE(SUM(CASE WHEN status IN ('queued','sending','uncertain') OR (status='failed' AND meta_message_id IS NULL) THEN 1 ELSE 0 END),0) AS active,
-         COALESCE(SUM(CASE WHEN status IN ('sent','delivered','read') THEN 1 ELSE 0 END),0) AS sent,
-         COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END),0) AS failed
-       FROM whatsapp_campaign_recipients
-       WHERE campaign_id=?`,
-    )
-    .bind(campaignId)
-    .first<{ total: number; active: number; sent: number; failed: number }>();
-  if (!summary) return null;
   const claimCheckAt = new Date().toISOString();
   const claimClause = claim ? " AND EXISTS (SELECT 1 FROM whatsapp_webhook_events WHERE event_hash=? AND processing_status='processing' AND attempt_count=? AND lease_until>?)" : "";
-  const processed = Number(summary.total) - Number(summary.active);
-  const result = await d1
-    .prepare(`UPDATE whatsapp_campaigns SET status=?,processed=?,sent=?,failed=?,finished_at=?,updated_at=? WHERE id=?${claimClause}`)
-    .bind(Number(summary.active) ? "running" : "completed", processed, Number(summary.sent), Number(summary.failed), Number(summary.active) ? null : now, now, campaignId, ...(claim ? [claim.eventHash, claim.attemptCount, claimCheckAt] : []))
+  await d1
+    .prepare(
+      `UPDATE whatsapp_campaigns AS c
+       SET status=CASE WHEN EXISTS (
+             SELECT 1 FROM whatsapp_campaign_recipients AS r
+             WHERE r.campaign_id=c.id AND (r.status IN ('queued','sending','uncertain') OR (r.status='failed' AND r.meta_message_id IS NULL))
+           ) THEN 'running' ELSE 'completed' END,
+           processed=(SELECT COUNT(*) FROM whatsapp_campaign_recipients AS r WHERE r.campaign_id=c.id AND NOT (r.status IN ('queued','sending','uncertain') OR (r.status='failed' AND r.meta_message_id IS NULL))),
+           sent=(SELECT COUNT(*) FROM whatsapp_campaign_recipients AS r WHERE r.campaign_id=c.id AND r.status IN ('sent','delivered','read')),
+           failed=(SELECT COUNT(*) FROM whatsapp_campaign_recipients AS r WHERE r.campaign_id=c.id AND r.status='failed'),
+           finished_at=CASE WHEN EXISTS (
+             SELECT 1 FROM whatsapp_campaign_recipients AS r
+             WHERE r.campaign_id=c.id AND (r.status IN ('queued','sending','uncertain') OR (r.status='failed' AND r.meta_message_id IS NULL))
+           ) THEN NULL ELSE ? END,
+           updated_at=?
+       WHERE c.id=?${claimClause}`,
+    )
+    .bind(now, now, campaignId, ...(claim ? [claim.eventHash, claim.attemptCount, claimCheckAt] : []))
     .run();
   if (claim && !(await webhookClaimIsActive(d1, claim))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
-  return { total: Number(summary.total), active: Number(summary.active), processed, sent: Number(summary.sent), failed: Number(summary.failed), changes: Number(result.meta?.changes ?? 0) };
+  return d1
+    .prepare(
+      `SELECT COUNT(*) AS total,
+          COALESCE(SUM(CASE WHEN status IN ('queued','sending','uncertain') OR (status='failed' AND meta_message_id IS NULL) THEN 1 ELSE 0 END),0) AS active,
+          COALESCE(SUM(CASE WHEN status IN ('sent','delivered','read') THEN 1 ELSE 0 END),0) AS sent,
+          COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END),0) AS failed
+       FROM whatsapp_campaign_recipients WHERE campaign_id=?`,
+    )
+    .bind(campaignId)
+    .first<{ total: number; active: number; sent: number; failed: number }>()
+    .then((summary) => summary ? { total: Number(summary.total), active: Number(summary.active), processed: Number(summary.total) - Number(summary.active), sent: Number(summary.sent), failed: Number(summary.failed) } : null);
 }
 
 async function updateWhatsAppMessageStatusResult(
@@ -275,6 +286,45 @@ export async function updateWhatsAppDeliveryStatus(
   if (messageResult !== "missing") return messageResult;
 
   if (!(incoming in whatsappStatusRank)) return "already_applied";
+  const attempt = await d1
+    .prepare(deliveryToken
+      ? `SELECT a.id,a.delivery_token,a.status AS attempt_status,r.id AS recipient_id,r.delivery_token AS current_delivery_token,r.campaign_id
+         FROM whatsapp_campaign_delivery_attempts AS a
+         JOIN whatsapp_campaign_recipients AS r ON r.id=a.recipient_id
+         WHERE a.meta_message_id=? OR a.delivery_token=?`
+      : `SELECT a.id,a.delivery_token,a.status AS attempt_status,r.id AS recipient_id,r.delivery_token AS current_delivery_token,r.campaign_id
+         FROM whatsapp_campaign_delivery_attempts AS a
+         JOIN whatsapp_campaign_recipients AS r ON r.id=a.recipient_id
+         WHERE a.meta_message_id=?`)
+    .bind(...(deliveryToken ? [metaMessageId, deliveryToken] : [metaMessageId]))
+    .first<{ id: string; delivery_token: string; attempt_status: string; recipient_id: string; current_delivery_token: string | null; campaign_id: string }>();
+  if (attempt) {
+    if (attempt.delivery_token !== attempt.current_delivery_token) return "already_applied";
+    const allStatuses = ["skipped", "queued", "sending", "uncertain", "sent", "delivered", "read", "failed"];
+    const incomingRank = whatsappStatusRank[incoming as keyof typeof whatsappStatusRank];
+    const allowedStatuses = incoming === "failed" ? allStatuses : allStatuses.filter((status) => campaignStatusRank(status) <= incomingRank);
+    const placeholders = allowedStatuses.map(() => "?").join(",");
+    const error = Array.isArray(errors) ? JSON.stringify(errors).slice(0, 1000) : null;
+    const claimCheckAt = new Date().toISOString();
+    const claimClause = claim ? " AND EXISTS (SELECT 1 FROM whatsapp_webhook_events WHERE event_hash=? AND processing_status='processing' AND attempt_count=? AND lease_until>?)" : "";
+    const result = await d1
+      .prepare(`UPDATE whatsapp_campaign_recipients
+                SET status=?, error=?, meta_message_id=CASE WHEN ?<>'' THEN COALESCE(meta_message_id,?) ELSE meta_message_id END
+                WHERE id=? AND delivery_token=? AND status IN (${placeholders})${claimClause}`)
+      .bind(incoming, error, metaMessageId, metaMessageId, attempt.recipient_id, attempt.delivery_token, ...allowedStatuses, ...(claim ? [claim.eventHash, claim.attemptCount, claimCheckAt] : []))
+      .run();
+    await d1
+      .prepare(`UPDATE whatsapp_campaign_delivery_attempts
+                SET status=?, error=?, meta_message_id=CASE WHEN ?<>'' THEN COALESCE(meta_message_id,?) ELSE meta_message_id END, updated_at=?
+                WHERE id=? AND status IN (${placeholders})${claimClause}`)
+      .bind(incoming, error, metaMessageId, metaMessageId, now, attempt.id, ...allowedStatuses, ...(claim ? [claim.eventHash, claim.attemptCount, claimCheckAt] : []))
+      .run();
+    const outcome = Number(result.meta?.changes ?? 0) === 1 ? "updated" : "already_applied";
+    await refreshWhatsAppCampaignSummary(d1, attempt.campaign_id, now, claim);
+    if (claim && !(await webhookClaimIsActive(d1, claim))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
+    return outcome;
+  }
+
   const recipient = await d1
     .prepare(deliveryToken ? "SELECT status,campaign_id FROM whatsapp_campaign_recipients WHERE meta_message_id=? OR delivery_token=?" : "SELECT status,campaign_id FROM whatsapp_campaign_recipients WHERE meta_message_id=?")
     .bind(...(deliveryToken ? [metaMessageId, deliveryToken] : [metaMessageId]))
@@ -282,7 +332,7 @@ export async function updateWhatsAppDeliveryStatus(
   if (!recipient) return "missing";
   // A live campaign send has no durable provider id until Meta accepts it. Do
   // not let a callback for an older attempt mutate that in-flight row.
-  const allStatuses = ["skipped", "queued", "uncertain", "sent", "delivered", "read", "failed"];
+  const allStatuses = deliveryToken ? ["skipped", "queued", "sending", "uncertain", "sent", "delivered", "read", "failed"] : ["skipped", "queued", "uncertain", "sent", "delivered", "read", "failed"];
   const incomingRank = whatsappStatusRank[incoming as keyof typeof whatsappStatusRank];
   const allowedStatuses = incoming === "failed" ? allStatuses : allStatuses.filter((status) => campaignStatusRank(status) <= incomingRank);
   const placeholders = allowedStatuses.map(() => "?").join(",");

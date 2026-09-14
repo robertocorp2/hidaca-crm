@@ -55,6 +55,16 @@ function database() {
       status TEXT NOT NULL,
       error TEXT
     );
+    CREATE TABLE whatsapp_campaign_delivery_attempts (
+      id TEXT PRIMARY KEY,
+      recipient_id TEXT NOT NULL,
+      delivery_token TEXT NOT NULL UNIQUE,
+      meta_message_id TEXT UNIQUE,
+      status TEXT NOT NULL,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE whatsapp_campaigns (
       id TEXT PRIMARY KEY,
       status TEXT NOT NULL,
@@ -168,7 +178,12 @@ test("status webhooks update campaign recipients and acknowledge stale statuses"
   sqlite.prepare("INSERT INTO whatsapp_campaign_recipients(id,campaign_id,delivery_token,status) VALUES(?,?,?,?)").run("recipient-3", "campaign-1", "recipient-3:1", "uncertain");
   assert.equal(await updateWhatsAppDeliveryStatus(d1, "", "delivered", null, options.now, undefined, "recipient-3:1"), "updated");
   assert.equal(sqlite.prepare("SELECT status FROM whatsapp_campaign_recipients WHERE id='recipient-3'").get()?.status, "delivered");
-  assert.deepEqual({ ...sqlite.prepare("SELECT status,processed,sent,failed FROM whatsapp_campaigns WHERE id='campaign-1'").get() }, { status: "running", processed: 2, sent: 2, failed: 0 });
+  sqlite.prepare("INSERT INTO whatsapp_campaign_recipients(id,campaign_id,delivery_token,status) VALUES(?,?,?,?)").run("recipient-4", "campaign-1", "recipient-4:2", "uncertain");
+  sqlite.prepare("INSERT INTO whatsapp_campaign_delivery_attempts(id,recipient_id,delivery_token,status,created_at,updated_at) VALUES(?,?,?,?,?,?)").run("attempt-4", "recipient-4", "recipient-4:2", "uncertain", options.now, options.now);
+  assert.equal(await updateWhatsAppDeliveryStatus(d1, "wamid-current", "delivered", null, options.now, undefined, "recipient-4:2"), "updated");
+  assert.deepEqual({ ...sqlite.prepare("SELECT status,meta_message_id FROM whatsapp_campaign_recipients WHERE id='recipient-4'").get() }, { status: "delivered", meta_message_id: "wamid-current" });
+  assert.deepEqual({ ...sqlite.prepare("SELECT status,meta_message_id FROM whatsapp_campaign_delivery_attempts WHERE id='attempt-4'").get() }, { status: "delivered", meta_message_id: "wamid-current" });
+  assert.deepEqual({ ...sqlite.prepare("SELECT status,processed,sent,failed FROM whatsapp_campaigns WHERE id='campaign-1'").get() }, { status: "running", processed: 3, sent: 3, failed: 0 });
   assert.equal(await updateWhatsAppDeliveryStatus(d1, "wamid-unknown", "delivered", null, options.now), "missing");
   sqlite.close();
 });

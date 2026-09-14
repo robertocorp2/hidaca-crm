@@ -2599,6 +2599,17 @@ export const whatsappCampaignRecipients = sqliteTable("whatsapp_campaign_recipie
   updatedAt: text("updated_at").notNull(),
 }, (table) => [uniqueIndex("whatsapp_campaign_recipients_phone_unique").on(table.campaignId, table.phone), index("whatsapp_campaign_recipients_queue_idx").on(table.campaignId, table.status)]);
 
+export const whatsappCampaignDeliveryAttempts = sqliteTable("whatsapp_campaign_delivery_attempts", {
+  id: text("id").primaryKey(),
+  recipientId: text("recipient_id").notNull().references(() => whatsappCampaignRecipients.id, { onDelete: "cascade" }),
+  deliveryToken: text("delivery_token").notNull(),
+  metaMessageId: text("meta_message_id"),
+  status: text("status").notNull(),
+  error: text("error"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [uniqueIndex("whatsapp_campaign_delivery_attempts_token_unique").on(table.deliveryToken), uniqueIndex("whatsapp_campaign_delivery_attempts_meta_unique").on(table.metaMessageId), index("whatsapp_campaign_delivery_attempts_recipient_idx").on(table.recipientId)]);
+
 export const aiProviderConfigs = sqliteTable("ai_provider_configs", {
   id: text("id").primaryKey(),
   provider: text("provider", { enum: ["openai", "deepseek", "google"] }).notNull(),

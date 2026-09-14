@@ -1,6 +1,6 @@
-import { and, eq, inArray, isNull, lt, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { getDb } from "../../../../../../db";
-import { whatsappCampaignRecipients, whatsappCampaigns } from "../../../../../../db/schema";
+import { whatsappCampaignDeliveryAttempts, whatsappCampaignRecipients, whatsappCampaigns } from "../../../../../../db/schema";
 import { authorizeApi } from "../../../../../lib/authorization";
 import { refreshWhatsAppCampaignSummary } from "../../../../../lib/whatsapp-webhook";
 import { getD1 } from "../../../../../../db";
@@ -29,28 +29,36 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
       .where(and(eq(whatsappCampaignRecipients.id, recipient.id), inArray(whatsappCampaignRecipients.status, ["queued", "failed"])))
       .returning({ id: whatsappCampaignRecipients.id });
     if (!claimed) continue;
+    const deliveryToken = `${recipient.id}:${recipient.attempts + 1}`;
     try {
-      const deliveryToken = `${recipient.id}:${recipient.attempts + 1}`;
+      await db.insert(whatsappCampaignDeliveryAttempts).values({ id: crypto.randomUUID(), recipientId: recipient.id, deliveryToken, metaMessageId: null, status: "sending", error: null, createdAt: claimedAt, updatedAt: claimedAt });
       const result = await sendWhatsAppMessage(recipient.phone, { type: "template", template: { name: campaign.templateName, language: { code: campaign.templateLanguage } }, biz_opaque_callback_data: deliveryToken });
       const metaMessageId = result.messages?.[0]?.id?.trim();
       if (!metaMessageId) {
         await db.update(whatsappCampaignRecipients)
           .set({ status: "uncertain", error: "Meta aceptó una respuesta sin ID de mensaje; reconcilia el callback antes de reintentar.", attempts: recipient.attempts + 1, lockedAt: null, updatedAt: new Date().toISOString() })
           .where(and(eq(whatsappCampaignRecipients.id, recipient.id), eq(whatsappCampaignRecipients.status, "sending")));
+        await db.update(whatsappCampaignDeliveryAttempts).set({ status: "uncertain", error: "Meta aceptó una respuesta sin ID de mensaje; reconcilia el callback antes de reintentar.", updatedAt: new Date().toISOString() }).where(and(eq(whatsappCampaignDeliveryAttempts.deliveryToken, deliveryToken), eq(whatsappCampaignDeliveryAttempts.status, "sending")));
         continue;
       }
+      await db.update(whatsappCampaignDeliveryAttempts)
+        .set({ metaMessageId, status: sql`CASE WHEN ${whatsappCampaignDeliveryAttempts.status}='sending' THEN 'sent' ELSE ${whatsappCampaignDeliveryAttempts.status} END`, updatedAt: new Date().toISOString() })
+        .where(eq(whatsappCampaignDeliveryAttempts.deliveryToken, deliveryToken));
       const [updated] = await db.update(whatsappCampaignRecipients)
-        .set({ status: "sent", metaMessageId, attempts: recipient.attempts + 1, lockedAt: null, updatedAt: new Date().toISOString() })
-        .where(and(eq(whatsappCampaignRecipients.id, recipient.id), eq(whatsappCampaignRecipients.status, "sending")))
+        .set({ status: sql`CASE WHEN ${whatsappCampaignRecipients.status}='sending' THEN 'sent' ELSE ${whatsappCampaignRecipients.status} END`, metaMessageId, attempts: recipient.attempts + 1, lockedAt: null, updatedAt: new Date().toISOString() })
+        .where(and(eq(whatsappCampaignRecipients.id, recipient.id), eq(whatsappCampaignRecipients.deliveryToken, deliveryToken), inArray(whatsappCampaignRecipients.status, ["sending", "sent", "delivered", "read", "failed"])))
         .returning({ id: whatsappCampaignRecipients.id });
       if (updated) sent += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Meta failure";
-      const uncertain = /timeout|timed out|abort|network|fetch failed/i.test(message);
+      const uncertain = /WHATSAPP_PROVIDER_RESPONSE_INVALID|timeout|timed out|abort|network|fetch failed/i.test(message);
       const [updated] = await db.update(whatsappCampaignRecipients)
         .set({ status: uncertain ? "uncertain" : "failed", error: message.slice(0, 500), attempts: recipient.attempts + 1, lockedAt: null, updatedAt: new Date().toISOString() })
         .where(and(eq(whatsappCampaignRecipients.id, recipient.id), eq(whatsappCampaignRecipients.status, "sending")))
         .returning({ id: whatsappCampaignRecipients.id });
+      await db.update(whatsappCampaignDeliveryAttempts)
+        .set({ status: uncertain ? "uncertain" : "failed", error: message.slice(0, 500), updatedAt: new Date().toISOString() })
+        .where(and(eq(whatsappCampaignDeliveryAttempts.deliveryToken, deliveryToken), eq(whatsappCampaignDeliveryAttempts.status, "sending")));
       if (updated) failed += 1;
     }
   }
