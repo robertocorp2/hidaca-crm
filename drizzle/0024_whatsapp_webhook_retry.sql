@@ -38,7 +38,7 @@ SELECT 'legacy-attempt:' || r.id,
        r.created_at,
        r.updated_at
 FROM `whatsapp_campaign_recipients` AS r
-WHERE r.delivery_token IS NOT NULL AND (r.attempts > 0 OR r.meta_message_id IS NOT NULL OR (r.status = 'uncertain' AND r.error = 'Legacy send requires Meta reconciliation'));--> statement-breakpoint
+WHERE r.delivery_token IS NOT NULL AND (r.attempts > 0 OR r.meta_message_id IS NOT NULL OR r.status = 'uncertain');--> statement-breakpoint
 UPDATE `whatsapp_webhook_events`
 SET processing_status = 'failed', processed_at = NULL,
     error = COALESCE(error, 'Legacy delivery had no durable completion marker')
@@ -47,6 +47,26 @@ UPDATE `whatsapp_webhook_events`
 SET processing_status = 'processed', processed_at = COALESCE(processed_at, received_at),
     error = COALESCE(error, 'Legacy ignored delivery preserved as a no-op')
 WHERE processing_status = 'ignored';--> statement-breakpoint
+-- Old webhook handling used an empty message ID for id-less inbound messages.
+-- Give an unambiguous legacy event one stable key before retryable delivery
+-- resumes, avoiding a second message/unread increment on redelivery.
+UPDATE `whatsapp_messages`
+SET meta_message_id = 'hidaca:legacy:' || (
+  SELECT e.event_hash
+  FROM `whatsapp_webhook_events` AS e
+  WHERE e.processing_status = 'failed'
+    AND e.received_at = `whatsapp_messages`.created_at
+    AND (SELECT COUNT(*) FROM `whatsapp_webhook_events` AS e2 WHERE e2.processing_status = 'failed' AND e2.received_at = `whatsapp_messages`.created_at) = 1
+  LIMIT 1
+)
+WHERE meta_message_id = ''
+  AND EXISTS (
+    SELECT 1
+    FROM `whatsapp_webhook_events` AS e
+    WHERE e.processing_status = 'failed'
+      AND e.received_at = `whatsapp_messages`.created_at
+      AND (SELECT COUNT(*) FROM `whatsapp_webhook_events` AS e2 WHERE e2.processing_status = 'failed' AND e2.received_at = `whatsapp_messages`.created_at) = 1
+  );--> statement-breakpoint
 UPDATE `whatsapp_conversations` AS c
 SET unread_count = CASE WHEN unread_count <
     (SELECT COUNT(*)

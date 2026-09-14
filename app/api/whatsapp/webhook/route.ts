@@ -28,9 +28,11 @@ export async function POST(request: Request) {
   const canonicalEventHash = await hashBody(eventIdentity ?? rawBody);
   const d1 = getD1();
   const eventHash = await resolveWhatsAppWebhookEventHash(d1, canonicalEventHash, legacyEventHash);
+  const legacyReplay = eventHash === legacyEventHash && legacyEventHash !== canonicalEventHash;
   const now = new Date().toISOString();
   try {
     const delivery = await runWhatsAppWebhookDelivery(d1, { eventHash, eventType: "batch", now }, async (claim) => {
+      const messageOccurrences = new Map<string, number>();
       for (const entry of payload.entry ?? []) for (const change of entry.changes ?? []) {
         const value = change.value ?? {};
         const metadata = value.metadata as { phone_number_id?: string } | undefined;
@@ -46,7 +48,13 @@ export async function POST(request: Request) {
           let mediaKey: string | null = null;
           let contentType: string | null = null;
           const messageIdentity = canonicalWhatsAppMessageIdentity(phoneNumberId, message);
-          const fallbackMessageId = message.id ? String(message.id) : await hashBody(messageIdentity);
+          const occurrence = (messageOccurrences.get(messageIdentity) ?? 0) + 1;
+          messageOccurrences.set(messageIdentity, occurrence);
+          const fallbackMessageId = message.id
+            ? String(message.id)
+            : legacyReplay
+              ? `legacy:${eventHash}`
+              : `${await hashBody(messageIdentity)}-${occurrence}`;
           if (mediaId && ["image", "document", "audio", "video"].includes(type)) {
             if (!env.FILES) throw new Error("WHATSAPP_MEDIA_STORAGE_UNAVAILABLE");
             if (!(await renewWhatsAppWebhookClaim(d1, claim, new Date().toISOString()))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
