@@ -48,18 +48,19 @@ export async function POST(request: Request) {
           let mediaKey: string | null = null;
           let contentType: string | null = null;
           const messageIdentity = canonicalWhatsAppMessageIdentity(phoneNumberId, message);
+          const messageIdentityHash = message.id ? null : await hashBody(messageIdentity);
           const occurrence = (messageOccurrences.get(messageIdentity) ?? 0) + 1;
           messageOccurrences.set(messageIdentity, occurrence);
           const fallbackMessageId = message.id
             ? String(message.id)
             : legacyReplay
               ? ""
-              : `${await hashBody(messageIdentity)}-${occurrence}`;
+              : `${messageIdentityHash}-${occurrence}`;
           if (mediaId && ["image", "document", "audio", "video"].includes(type)) {
             if (!env.FILES) throw new Error("WHATSAPP_MEDIA_STORAGE_UNAVAILABLE");
             if (!(await renewWhatsAppWebhookClaim(d1, claim, new Date().toISOString()))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
             const media = await downloadMetaMedia(mediaId);
-            const mediaPart = String(message.id ?? (legacyReplay ? `event-${eventHash}-${occurrence}` : `event-${fallbackMessageId}`)).replace(/[^a-zA-Z0-9_.-]/g, "_");
+            const mediaPart = String(message.id ?? (legacyReplay ? `event-${eventHash}-${messageIdentityHash}-${occurrence}` : `event-${fallbackMessageId}`)).replace(/[^a-zA-Z0-9_.-]/g, "_");
             mediaKey = `whatsapp/${conversationId}/${mediaPart}`;
             contentType = media.contentType;
             if (!(await renewWhatsAppWebhookClaim(d1, claim, new Date().toISOString()))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
