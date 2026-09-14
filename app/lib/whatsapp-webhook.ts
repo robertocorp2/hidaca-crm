@@ -25,6 +25,13 @@ type WebhookDeliveryOptions = {
   leaseMs?: number;
 };
 
+export type WhatsAppWebhookClaim = {
+  eventHash: string;
+  attemptCount: number;
+};
+
+export type WhatsAppStatusUpdate = "updated" | "already_applied" | "missing";
+
 function leaseUntil(now: string, leaseMs: number) {
   return new Date(new Date(now).getTime() + leaseMs).toISOString();
 }
@@ -99,7 +106,7 @@ export async function failWhatsAppWebhookEvent(d1: D1Database, eventHash: string
 export async function runWhatsAppWebhookDelivery<T>(
   d1: D1Database,
   options: WebhookDeliveryOptions,
-  work: () => Promise<T>,
+  work: (claim: WhatsAppWebhookClaim) => Promise<T>,
 ): Promise<
   | { status: "completed"; attemptCount: number; value: T }
   | { status: "duplicate"; attemptCount: number }
@@ -107,8 +114,9 @@ export async function runWhatsAppWebhookDelivery<T>(
 > {
   const claim = await claimWhatsAppWebhookEvent(d1, options);
   if (claim.status !== "claimed") return claim;
+  const attempt: WhatsAppWebhookClaim = { eventHash: options.eventHash, attemptCount: claim.attemptCount };
   try {
-    const value = await work();
+    const value = await work(attempt);
     await completeWhatsAppWebhookEvent(d1, options.eventHash, claim.attemptCount, options.now);
     return { status: "completed", attemptCount: claim.attemptCount, value };
   } catch (error) {
@@ -130,17 +138,20 @@ export async function persistInboundWhatsAppMessage(
     mediaKey: string | null;
     contentType: string | null;
     now: string;
+    claim?: WhatsAppWebhookClaim;
   },
 ) {
+  const claimClause = input.claim ? "WHERE EXISTS (SELECT 1 FROM whatsapp_webhook_events WHERE event_hash=? AND processing_status='processing' AND attempt_count=?)" : "";
   const inserted = await d1
     .prepare(
       `INSERT INTO whatsapp_messages
        (id,conversation_id,meta_message_id,direction,type,body,caption,status,media_id,media_key,content_type,created_at)
-       VALUES (?, ?, ?, 'inbound', ?, ?, ?, 'received', ?, ?, ?, ?)
+       SELECT ?, ?, ?, 'inbound', ?, ?, ?, 'received', ?, ?, ?, ?
+       ${claimClause}
        ON CONFLICT(meta_message_id) DO NOTHING
        RETURNING id`,
     )
-    .bind(input.id, input.conversationId, input.metaMessageId, input.type, input.body, input.caption, input.mediaId, input.mediaKey, input.contentType, input.now)
+    .bind(input.id, input.conversationId, input.metaMessageId, input.type, input.body, input.caption, input.mediaId, input.mediaKey, input.contentType, input.now, ...(input.claim ? [input.claim.eventHash, input.claim.attemptCount] : []))
     .first<{ id: string }>();
 
   // The trigger-backed unread increment only runs for a newly inserted inbound
@@ -152,21 +163,44 @@ export async function persistInboundWhatsAppMessage(
            last_message_at=CASE WHEN last_message_at IS NULL OR last_message_at < ? THEN ? ELSE last_message_at END,
            service_window_expires_at=CASE WHEN service_window_expires_at IS NULL OR service_window_expires_at < ? THEN ? ELSE service_window_expires_at END,
            updated_at=CASE WHEN updated_at < ? THEN ? ELSE updated_at END
-       WHERE id=?`,
+       WHERE id=? ${input.claim ? "AND EXISTS (SELECT 1 FROM whatsapp_webhook_events WHERE event_hash=? AND processing_status='processing' AND attempt_count=?)" : ""}`,
     )
-    .bind(input.now, input.now, input.now, input.now, new Date(new Date(input.now).getTime() + 24 * 60 * 60 * 1000).toISOString(), new Date(new Date(input.now).getTime() + 24 * 60 * 60 * 1000).toISOString(), input.now, input.now, input.conversationId)
+    .bind(input.now, input.now, input.now, input.now, new Date(new Date(input.now).getTime() + 24 * 60 * 60 * 1000).toISOString(), new Date(new Date(input.now).getTime() + 24 * 60 * 60 * 1000).toISOString(), input.now, input.now, input.conversationId, ...(input.claim ? [input.claim.eventHash, input.claim.attemptCount] : []))
     .run();
+  if (input.claim && !(await webhookClaimIsActive(d1, input.claim))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
   return Boolean(inserted);
 }
 
-export async function updateWhatsAppMessageStatus(d1: D1Database, metaMessageId: string, incoming: string, errors: unknown, now: string) {
-  if (!(incoming in whatsappStatusRank)) return false;
+export async function webhookClaimIsActive(d1: D1Database, claim: WhatsAppWebhookClaim) {
+  const row = await d1
+    .prepare("SELECT 1 AS active FROM whatsapp_webhook_events WHERE event_hash=? AND processing_status='processing' AND attempt_count=?")
+    .bind(claim.eventHash, claim.attemptCount)
+    .first<{ active: number }>();
+  return Boolean(row);
+}
+
+function campaignStatusRank(status: string) {
+  return { skipped: 0, queued: 1, sending: 1, uncertain: 1, sent: 2, delivered: 3, read: 4, failed: 5 }[status as "skipped" | "queued" | "sending" | "uncertain" | "sent" | "delivered" | "read" | "failed"] ?? -1;
+}
+
+async function updateWhatsAppMessageStatusResult(
+  d1: D1Database,
+  metaMessageId: string,
+  incoming: string,
+  errors: unknown,
+  now: string,
+  claim?: WhatsAppWebhookClaim,
+): Promise<WhatsAppStatusUpdate> {
+  if (!(incoming in whatsappStatusRank)) return "already_applied";
+  const existingMessage = await d1.prepare("SELECT status FROM whatsapp_messages WHERE meta_message_id=?").bind(metaMessageId).first<{ status: string }>();
+  if (!existingMessage) return "missing";
   const incomingRank = whatsappStatusRank[incoming as keyof typeof whatsappStatusRank];
   const allowedStatuses = incoming === "failed"
     ? whatsappMessageStatuses
     : whatsappMessageStatuses.filter(status => whatsappStatusRank[status] <= incomingRank);
   const error = Array.isArray(errors) ? JSON.stringify(errors).slice(0, 1000) : null;
   const placeholders = allowedStatuses.map(() => "?").join(",");
+  const claimClause = claim ? " AND EXISTS (SELECT 1 FROM whatsapp_webhook_events WHERE event_hash=? AND processing_status='processing' AND attempt_count=?)" : "";
   const result = await d1
     .prepare(
       `UPDATE whatsapp_messages
@@ -174,11 +208,44 @@ export async function updateWhatsAppMessageStatus(d1: D1Database, metaMessageId:
            delivered_at=CASE WHEN ?='delivered' THEN COALESCE(delivered_at,?) ELSE delivered_at END,
            read_at=CASE WHEN ?='read' THEN COALESCE(read_at,?) ELSE read_at END,
            failed_at=CASE WHEN ?='failed' THEN COALESCE(failed_at,?) ELSE failed_at END
-       WHERE meta_message_id=? AND status IN (${placeholders})`,
+       WHERE meta_message_id=? AND status IN (${placeholders})${claimClause}`,
     )
-    .bind(incoming, error, incoming, now, incoming, now, incoming, now, metaMessageId, ...allowedStatuses)
+    .bind(incoming, error, incoming, now, incoming, now, incoming, now, metaMessageId, ...allowedStatuses, ...(claim ? [claim.eventHash, claim.attemptCount] : []))
     .run();
-  return Number(result.meta?.changes ?? 0) === 1;
+  if (claim && !(await webhookClaimIsActive(d1, claim))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
+  return Number(result.meta?.changes ?? 0) === 1 ? "updated" : "already_applied";
+}
+
+export async function updateWhatsAppDeliveryStatus(
+  d1: D1Database,
+  metaMessageId: string,
+  incoming: string,
+  errors: unknown,
+  now: string,
+  claim?: WhatsAppWebhookClaim,
+): Promise<WhatsAppStatusUpdate> {
+  const messageResult = await updateWhatsAppMessageStatusResult(d1, metaMessageId, incoming, errors, now, claim);
+  if (messageResult !== "missing") return messageResult;
+
+  if (!(incoming in whatsappStatusRank)) return "already_applied";
+  const recipient = await d1.prepare("SELECT status FROM whatsapp_campaign_recipients WHERE meta_message_id=?").bind(metaMessageId).first<{ status: string }>();
+  if (!recipient) return "missing";
+  const allStatuses = ["skipped", "queued", "sending", "uncertain", "sent", "delivered", "read", "failed"];
+  const incomingRank = whatsappStatusRank[incoming as keyof typeof whatsappStatusRank];
+  const allowedStatuses = incoming === "failed" ? allStatuses : allStatuses.filter((status) => campaignStatusRank(status) <= incomingRank);
+  const placeholders = allowedStatuses.map(() => "?").join(",");
+  const error = Array.isArray(errors) ? JSON.stringify(errors).slice(0, 1000) : null;
+  const claimClause = claim ? " AND EXISTS (SELECT 1 FROM whatsapp_webhook_events WHERE event_hash=? AND processing_status='processing' AND attempt_count=?)" : "";
+  const result = await d1
+    .prepare(`UPDATE whatsapp_campaign_recipients SET status=?, error=? WHERE meta_message_id=? AND status IN (${placeholders})${claimClause}`)
+    .bind(incoming, error, metaMessageId, ...allowedStatuses, ...(claim ? [claim.eventHash, claim.attemptCount] : []))
+    .run();
+  if (claim && !(await webhookClaimIsActive(d1, claim))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
+  return Number(result.meta?.changes ?? 0) === 1 ? "updated" : "already_applied";
+}
+
+export async function updateWhatsAppMessageStatus(d1: D1Database, metaMessageId: string, incoming: string, errors: unknown, now: string) {
+  return (await updateWhatsAppMessageStatusResult(d1, metaMessageId, incoming, errors, now)) === "updated";
 }
 
 export function whatsappWebhookResponse(status: "completed" | "duplicate" | "in_flight") {

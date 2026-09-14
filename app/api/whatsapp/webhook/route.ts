@@ -1,8 +1,9 @@
 import { and, eq, isNull, or } from "drizzle-orm";
+import type { D1Database } from "@cloudflare/workers-types";
 import { getD1, getDb } from "../../../../db";
 import { contacts, leads, opportunities, whatsappConversations } from "../../../../db/schema";
 import { normalizePhone } from "../../../lib/crm";
-import { persistInboundWhatsAppMessage, runWhatsAppWebhookDelivery, updateWhatsAppMessageStatus, whatsappWebhookResponse } from "../../../lib/whatsapp-webhook";
+import { persistInboundWhatsAppMessage, runWhatsAppWebhookDelivery, updateWhatsAppDeliveryStatus, webhookClaimIsActive, type WhatsAppWebhookClaim, whatsappWebhookResponse } from "../../../lib/whatsapp-webhook";
 import { downloadMetaMedia, verifyWhatsAppSignature } from "../../../lib/whatsapp";
 import { env } from "cloudflare:workers";
 
@@ -25,7 +26,7 @@ export async function POST(request: Request) {
   const d1 = getD1();
   const now = new Date().toISOString();
   try {
-    const delivery = await runWhatsAppWebhookDelivery(d1, { eventHash, eventType: "batch", now }, async () => {
+    const delivery = await runWhatsAppWebhookDelivery(d1, { eventHash, eventType: "batch", now }, async (claim) => {
       let messageOrdinal = 0;
       for (const entry of payload.entry ?? []) for (const change of entry.changes ?? []) {
         const value = change.value ?? {};
@@ -35,7 +36,7 @@ export async function POST(request: Request) {
           const from = String(message.from ?? "");
           if (!from) continue;
           const profile = ((value.contacts as Array<{ wa_id?: string; profile?: { name?: string } }> | undefined) ?? []).find((contact) => contact.wa_id === from);
-          const conversationId = await upsertConversation(phoneNumberId, from, profile?.profile?.name ?? from, now);
+          const conversationId = await upsertConversation(phoneNumberId, from, profile?.profile?.name ?? from, now, claim);
           const type = String(message.type ?? "unsupported");
           const content = message[type] as { body?: string; caption?: string; id?: string } | undefined;
           const mediaId = content?.id ?? null;
@@ -45,9 +46,10 @@ export async function POST(request: Request) {
           if (mediaId && ["image", "document", "audio", "video"].includes(type)) {
             if (!env.FILES) throw new Error("WHATSAPP_MEDIA_STORAGE_UNAVAILABLE");
             const media = await downloadMetaMedia(mediaId);
-          const mediaPart = String(message.id ?? ordinal).replace(/[^a-zA-Z0-9_.-]/g, "_");
+            const mediaPart = String(message.id ?? ordinal).replace(/[^a-zA-Z0-9_.-]/g, "_");
             mediaKey = `whatsapp/${conversationId}/${eventHash}-${mediaPart}`;
             contentType = media.contentType;
+            if (!(await webhookClaimIsActive(d1, claim))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
             await env.FILES.put(mediaKey, media.body, { httpMetadata: { contentType } });
           }
           await persistInboundWhatsAppMessage(d1, {
@@ -61,9 +63,10 @@ export async function POST(request: Request) {
             mediaKey,
             contentType,
             now,
+            claim,
           });
         }
-        for (const status of (value.statuses as Array<Record<string, unknown>> | undefined) ?? []) await applyStatus(String(status.id ?? ""), String(status.status ?? ""), status.errors, now);
+        for (const status of (value.statuses as Array<Record<string, unknown>> | undefined) ?? []) await applyStatus(String(status.id ?? ""), String(status.status ?? ""), status.errors, now, claim);
       }
     });
     return whatsappWebhookResponse(delivery.status);
@@ -72,8 +75,39 @@ export async function POST(request: Request) {
   }
 }
 
-async function upsertConversation(phoneNumberId: string, waId: string, name: string, now: string) {
+async function insertAutomaticLead(d1: D1Database, leadId: string, name: string, waId: string, now: string, claim: WhatsAppWebhookClaim) {
+  await d1
+    .prepare(
+      `INSERT INTO leads (id,business_name,contact_name,email,normalized_email,phone,normalized_phone,source,status,owner_email,notes,created_by,created_at,updated_at)
+       SELECT ?, ?, ?, '', '', ?, ?, 'WhatsApp', 'new', '', 'Prospecto creado automáticamente desde WhatsApp.', 'whatsapp:webhook', ?, ?
+       WHERE EXISTS (SELECT 1 FROM whatsapp_webhook_events WHERE event_hash=? AND processing_status='processing' AND attempt_count=?)
+       ON CONFLICT(id) DO NOTHING`,
+    )
+    .bind(leadId, name, name, waId, normalizePhone(waId), now, now, claim.eventHash, claim.attemptCount)
+    .run();
+  if (!(await webhookClaimIsActive(d1, claim))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
+}
+
+async function updateConversationMatch(
+  d1: D1Database,
+  id: string,
+  values: { businessId: string | null; contactId: string | null; leadId: string | null; opportunityId: string | null; matchState: string; updatedAt: string },
+  claim: WhatsAppWebhookClaim,
+) {
+  await d1
+    .prepare(
+      `UPDATE whatsapp_conversations
+       SET business_id=?,contact_id=?,lead_id=?,opportunity_id=?,match_state=?,updated_at=?
+       WHERE id=? AND EXISTS (SELECT 1 FROM whatsapp_webhook_events WHERE event_hash=? AND processing_status='processing' AND attempt_count=?)`,
+    )
+    .bind(values.businessId, values.contactId, values.leadId, values.opportunityId, values.matchState, values.updatedAt, id, claim.eventHash, claim.attemptCount)
+    .run();
+  if (!(await webhookClaimIsActive(d1, claim))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
+}
+
+async function upsertConversation(phoneNumberId: string, waId: string, name: string, now: string, claim: WhatsAppWebhookClaim) {
   const db = getDb();
+  const d1 = getD1();
   const [existing] = await db.select({ id: whatsappConversations.id, leadId: whatsappConversations.leadId, matchState: whatsappConversations.matchState }).from(whatsappConversations).where(and(eq(whatsappConversations.phoneNumberId, phoneNumberId), eq(whatsappConversations.waId, waId))).limit(1);
   const normalized = normalizePhone(waId);
   const [contactRows, leadRows] = await Promise.all([
@@ -95,26 +129,41 @@ async function upsertConversation(phoneNumberId: string, waId: string, name: str
     const automaticLeadId = `whatsapp:${existing.id}:lead`;
     if (!contact && !ambiguous && (!lead || lead.id === automaticLeadId)) {
       const leadId = automaticLeadId;
-      await db.insert(leads).values({ id: leadId, businessName: name, contactName: name, email: "", normalizedEmail: "", phone: waId, normalizedPhone: normalizePhone(waId), source: "WhatsApp", status: "new", ownerEmail: "", notes: "Prospecto creado automáticamente desde WhatsApp.", createdBy: "whatsapp:webhook", createdAt: now, updatedAt: now, archivedAt: null, convertedBusinessId: null, convertedContactId: null, convertedOpportunityId: null, convertedAt: null, convertedBy: null }).onConflictDoNothing({ target: leads.id });
-      await db.update(whatsappConversations).set({ leadId, matchState: "created_prospect", updatedAt: now }).where(eq(whatsappConversations.id, existing.id));
+      await insertAutomaticLead(d1, leadId, name, waId, now, claim);
+      await updateConversationMatch(d1, existing.id, { businessId: null, contactId: null, leadId, opportunityId: null, matchState: "created_prospect", updatedAt: now }, claim);
     } else {
-      await db.update(whatsappConversations).set({ businessId, contactId: contact?.id ?? null, leadId: lead?.id ?? null, opportunityId, matchState: ambiguous ? "ambiguous" : "matched", updatedAt: now }).where(eq(whatsappConversations.id, existing.id));
+      await updateConversationMatch(d1, existing.id, { businessId, contactId: contact?.id ?? null, leadId: lead?.id ?? null, opportunityId, matchState: ambiguous ? "ambiguous" : "matched", updatedAt: now }, claim);
     }
     return existing.id;
   }
   const id = crypto.randomUUID();
-  await db.insert(whatsappConversations).values({ id, phoneNumberId, waId, displayName: name, profileName: name, businessId, contactId: contact?.id ?? null, leadId: lead?.id ?? null, opportunityId, matchState: ambiguous ? "ambiguous" : contact || lead ? "matched" : "unmatched", createdAt: now, updatedAt: now });
+  const inserted = await d1
+    .prepare(
+      `INSERT INTO whatsapp_conversations (id,phone_number_id,wa_id,display_name,profile_name,business_id,contact_id,lead_id,opportunity_id,match_state,created_at,updated_at)
+       SELECT ?,?,?,?,?,?,?,?,?,?,?,?
+       WHERE EXISTS (SELECT 1 FROM whatsapp_webhook_events WHERE event_hash=? AND processing_status='processing' AND attempt_count=?)
+       ON CONFLICT(phone_number_id,wa_id) DO NOTHING
+       RETURNING id`,
+    )
+    .bind(id, phoneNumberId, waId, name, name, businessId, contact?.id ?? null, lead?.id ?? null, opportunityId, ambiguous ? "ambiguous" : contact || lead ? "matched" : "unmatched", now, now, claim.eventHash, claim.attemptCount)
+    .first<{ id: string }>();
+  if (!inserted) {
+    if (!(await webhookClaimIsActive(d1, claim))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
+    const [concurrent] = await db.select({ id: whatsappConversations.id }).from(whatsappConversations).where(and(eq(whatsappConversations.phoneNumberId, phoneNumberId), eq(whatsappConversations.waId, waId))).limit(1);
+    if (!concurrent) throw new Error("WHATSAPP_CONVERSATION_INSERT_FAILED");
+    return concurrent.id;
+  }
   if (!contact && !lead && !ambiguous) {
     const leadId = `whatsapp:${id}:lead`;
-    await db.insert(leads).values({ id: leadId, businessName: name, contactName: name, email: "", normalizedEmail: "", phone: waId, normalizedPhone: normalizePhone(waId), source: "WhatsApp", status: "new", ownerEmail: "", notes: "Prospecto creado automáticamente desde WhatsApp.", createdBy: "whatsapp:webhook", createdAt: now, updatedAt: now, archivedAt: null, convertedBusinessId: null, convertedContactId: null, convertedOpportunityId: null, convertedAt: null, convertedBy: null }).onConflictDoNothing({ target: leads.id });
-    await db.update(whatsappConversations).set({ leadId, matchState: "created_prospect" }).where(eq(whatsappConversations.id, id));
+    await insertAutomaticLead(d1, leadId, name, waId, now, claim);
+    await updateConversationMatch(d1, id, { businessId: null, contactId: null, leadId, opportunityId: null, matchState: "created_prospect", updatedAt: now }, claim);
   }
   return id;
 }
 
-async function applyStatus(metaMessageId: string, incoming: string, errors: unknown, now: string) {
+async function applyStatus(metaMessageId: string, incoming: string, errors: unknown, now: string, claim: WhatsAppWebhookClaim) {
   if (!["sent", "delivered", "read", "failed"].includes(incoming)) return;
-  if (!(await updateWhatsAppMessageStatus(getD1(), metaMessageId, incoming, errors, now))) {
+  if ((await updateWhatsAppDeliveryStatus(getD1(), metaMessageId, incoming, errors, now, claim)) === "missing") {
     throw new Error("WHATSAPP_STATUS_MESSAGE_NOT_FOUND");
   }
 }
