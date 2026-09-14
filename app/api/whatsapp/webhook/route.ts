@@ -5,7 +5,7 @@ import { contacts, leads, opportunities, whatsappConversations } from "../../../
 import { normalizePhone } from "../../../lib/crm";
 import { persistInboundWhatsAppMessage, renewWhatsAppWebhookClaim, runWhatsAppWebhookDelivery, updateWhatsAppDeliveryStatus, webhookClaimIsActive, type WhatsAppWebhookClaim, whatsappWebhookResponse } from "../../../lib/whatsapp-webhook";
 import { downloadMetaMedia, verifyWhatsAppSignature } from "../../../lib/whatsapp";
-import { canonicalWhatsAppWebhookIdentity } from "../../../lib/whatsapp-webhook-identity";
+import { canonicalWhatsAppMessageIdentity, canonicalWhatsAppWebhookIdentity } from "../../../lib/whatsapp-webhook-identity";
 import { env } from "cloudflare:workers";
 
 export async function GET(request: Request) {
@@ -29,7 +29,6 @@ export async function POST(request: Request) {
   const now = new Date().toISOString();
   try {
     const delivery = await runWhatsAppWebhookDelivery(d1, { eventHash, eventType: "batch", now }, async (claim) => {
-      let messageOrdinal = 0;
       for (const entry of payload.entry ?? []) for (const change of entry.changes ?? []) {
         const value = change.value ?? {};
         const metadata = value.metadata as { phone_number_id?: string } | undefined;
@@ -44,12 +43,13 @@ export async function POST(request: Request) {
           const mediaId = content?.id ?? null;
           let mediaKey: string | null = null;
           let contentType: string | null = null;
-          const ordinal = messageOrdinal++;
+          const messageIdentity = canonicalWhatsAppMessageIdentity(phoneNumberId, message);
+          const fallbackMessageId = message.id ? String(message.id) : await hashBody(messageIdentity);
           if (mediaId && ["image", "document", "audio", "video"].includes(type)) {
             if (!env.FILES) throw new Error("WHATSAPP_MEDIA_STORAGE_UNAVAILABLE");
             if (!(await renewWhatsAppWebhookClaim(d1, claim, new Date().toISOString()))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
             const media = await downloadMetaMedia(mediaId);
-            const mediaPart = String(message.id ?? `event-${eventHash}-${ordinal}`).replace(/[^a-zA-Z0-9_.-]/g, "_");
+            const mediaPart = String(message.id ?? `event-${fallbackMessageId}`).replace(/[^a-zA-Z0-9_.-]/g, "_");
             mediaKey = `whatsapp/${conversationId}/${mediaPart}`;
             contentType = media.contentType;
             if (!(await renewWhatsAppWebhookClaim(d1, claim, new Date().toISOString()))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
@@ -59,7 +59,7 @@ export async function POST(request: Request) {
           await persistInboundWhatsAppMessage(d1, {
             id: crypto.randomUUID(),
             conversationId,
-            metaMessageId: message.id ? String(message.id) : `hidaca:${eventHash}:${ordinal}`,
+            metaMessageId: message.id ? String(message.id) : `hidaca:${fallbackMessageId}`,
             type: ["text", "image", "document", "audio", "video", "sticker", "location"].includes(type) ? type : "unsupported",
             body: content?.body ?? "",
             caption: content?.caption ?? "",

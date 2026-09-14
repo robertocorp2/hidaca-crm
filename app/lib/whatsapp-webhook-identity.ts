@@ -29,8 +29,7 @@ export function canonicalWhatsAppWebhookIdentity(payload: WhatsAppWebhookPayload
       const value = change.value ?? {};
       const phoneNumberId = String((value.metadata as { phone_number_id?: unknown } | undefined)?.phone_number_id ?? "");
       for (const message of (value.messages as Array<Record<string, unknown>> | undefined) ?? []) {
-        const id = message.id;
-        identities.push(id ? `message|${phoneNumberId}|${String(id)}` : `message-fallback|${phoneNumberId}|${stableJson(message)}`);
+        identities.push(canonicalWhatsAppMessageIdentity(phoneNumberId, message));
       }
       for (const status of (value.statuses as Array<Record<string, unknown>> | undefined) ?? []) {
         const id = status.id;
@@ -39,4 +38,8 @@ export function canonicalWhatsAppWebhookIdentity(payload: WhatsAppWebhookPayload
     }
   }
   return identities.length ? identities.sort().join("\n") : null;
+}
+
+export function canonicalWhatsAppMessageIdentity(phoneNumberId: string, message: Record<string, unknown>): string {
+  return message.id ? `message|${phoneNumberId}|${String(message.id)}` : `message-fallback|${phoneNumberId}|${stableJson(message)}`;
 }

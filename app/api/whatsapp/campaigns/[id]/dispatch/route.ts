@@ -24,7 +24,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   let sent = 0; let failed = 0;
   for (const recipient of recipients) {
     const claimedAt = new Date().toISOString();
-    const deliveryToken = `${recipient.id}:${recipient.attempts + 1}`;
+    const deliveryToken = `${recipient.id}:${recipient.attempts + 1}:${crypto.randomUUID()}`;
     const attemptId = crypto.randomUUID();
     // Claiming the recipient and recording the attempt must commit together;
     // otherwise a crash between two writes can strand a send without history.
@@ -33,8 +33,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
         `UPDATE whatsapp_campaign_recipients
          SET status='sending', locked_at=?, delivery_token=?, error=NULL, updated_at=?
          WHERE id=? AND status IN ('queued','failed')
-           AND EXISTS (SELECT 1 FROM whatsapp_campaigns AS c WHERE c.id=? AND c.status <> 'paused')
-         RETURNING id`,
+           AND EXISTS (SELECT 1 FROM whatsapp_campaigns AS c WHERE c.id=? AND c.status <> 'paused')`,
       ).bind(claimedAt, deliveryToken, claimedAt, recipient.id, id),
       getD1().prepare(
         `INSERT INTO whatsapp_campaign_delivery_attempts
@@ -44,7 +43,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
          WHERE id=? AND status='sending' AND delivery_token=?`,
       ).bind(attemptId, deliveryToken, claimedAt, claimedAt, recipient.id, deliveryToken),
     ]);
-    const claimed = Boolean((claimBatch[0]?.results ?? [])[0]);
+    const claimed = Number(claimBatch[0]?.meta?.changes ?? 0) === 1;
     if (!claimed) continue;
     let providerAccepted = false;
     let providerMetaMessageId: string | null = null;
