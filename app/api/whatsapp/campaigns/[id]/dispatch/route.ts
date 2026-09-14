@@ -16,15 +16,27 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   const recipients = await db.select().from(whatsappCampaignRecipients).where(and(eq(whatsappCampaignRecipients.campaignId, id), inArray(whatsappCampaignRecipients.status, ["queued", "failed"]))).limit(25);
   let sent = 0; let failed = 0;
   for (const recipient of recipients) {
+    const now = new Date().toISOString();
+    const [claimed] = await db.update(whatsappCampaignRecipients)
+      .set({ status: "sending", lockedAt: now, updatedAt: now })
+      .where(and(eq(whatsappCampaignRecipients.id, recipient.id), inArray(whatsappCampaignRecipients.status, ["queued", "failed"])))
+      .returning({ id: whatsappCampaignRecipients.id });
+    if (!claimed) continue;
     try {
       const result = await sendWhatsAppMessage(recipient.phone, { type: "template", template: { name: campaign.templateName, language: { code: campaign.templateLanguage } } });
-      await db.update(whatsappCampaignRecipients).set({ status: "sent", metaMessageId: result.messages?.[0]?.id ?? null, attempts: recipient.attempts + 1, updatedAt: new Date().toISOString() }).where(eq(whatsappCampaignRecipients.id, recipient.id));
-      sent += 1;
+      const [updated] = await db.update(whatsappCampaignRecipients)
+        .set({ status: "sent", metaMessageId: result.messages?.[0]?.id ?? null, attempts: recipient.attempts + 1, lockedAt: null, updatedAt: new Date().toISOString() })
+        .where(and(eq(whatsappCampaignRecipients.id, recipient.id), eq(whatsappCampaignRecipients.status, "sending")))
+        .returning({ id: whatsappCampaignRecipients.id });
+      if (updated) sent += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Meta failure";
       const uncertain = /timeout|timed out|abort|network|fetch failed/i.test(message);
-      await db.update(whatsappCampaignRecipients).set({ status: uncertain ? "uncertain" : "failed", error: message.slice(0, 500), attempts: recipient.attempts + 1, updatedAt: new Date().toISOString() }).where(eq(whatsappCampaignRecipients.id, recipient.id));
-      failed += 1;
+      const [updated] = await db.update(whatsappCampaignRecipients)
+        .set({ status: uncertain ? "uncertain" : "failed", error: message.slice(0, 500), attempts: recipient.attempts + 1, lockedAt: null, updatedAt: new Date().toISOString() })
+        .where(and(eq(whatsappCampaignRecipients.id, recipient.id), eq(whatsappCampaignRecipients.status, "sending")))
+        .returning({ id: whatsappCampaignRecipients.id });
+      if (updated) failed += 1;
     }
   }
   const remaining = await db.select({ id: whatsappCampaignRecipients.id }).from(whatsappCampaignRecipients).where(and(eq(whatsappCampaignRecipients.campaignId, id), inArray(whatsappCampaignRecipients.status, ["queued", "failed"])));

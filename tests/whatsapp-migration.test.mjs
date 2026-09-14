@@ -17,6 +17,7 @@ test("webhook migration makes legacy completion policy explicit and installs ato
       processed_at TEXT
     );
     CREATE TABLE whatsapp_conversations (id TEXT PRIMARY KEY, unread_count INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE whatsapp_conversation_reads (conversation_id TEXT NOT NULL, last_read_at TEXT NOT NULL);
     CREATE TABLE whatsapp_messages (
       id TEXT PRIMARY KEY,
       conversation_id TEXT NOT NULL,
@@ -31,8 +32,10 @@ test("webhook migration makes legacy completion policy explicit and installs ato
       content_type TEXT,
       created_at TEXT NOT NULL
     );
-    INSERT INTO whatsapp_webhook_events(event_hash,event_type,processing_status,received_at) VALUES('legacy-partial','batch','processed','2026-09-14T04:00:00.000Z');
+    INSERT INTO whatsapp_webhook_events(event_hash,event_type,meta_message_id,processing_status,received_at) VALUES('legacy-partial','batch','wamid-1','processed','2026-09-14T04:00:00.000Z');
     INSERT INTO whatsapp_webhook_events(event_hash,event_type,processing_status,received_at) VALUES('legacy-ignored','batch','ignored','2026-09-14T04:00:00.000Z');
+    INSERT INTO whatsapp_conversations(id,unread_count) VALUES('conversation-1',0);
+    INSERT INTO whatsapp_messages(id,conversation_id,meta_message_id,direction,type,body,caption,status,created_at) VALUES('message-1','conversation-1','wamid-1','inbound','text','Hola','', 'received', '2026-09-14T04:00:00.000Z');
   `);
   const migration = await readFile(new URL("../drizzle/0024_whatsapp_webhook_retry.sql", import.meta.url), "utf8");
   for (const statement of migration.split("--> statement-breakpoint")) if (statement.trim()) database.exec(statement);
@@ -48,8 +51,9 @@ test("webhook migration makes legacy completion policy explicit and installs ato
     error: "Legacy ignored delivery preserved as a no-op",
   });
 
-  database.prepare("INSERT INTO whatsapp_conversations(id,unread_count) VALUES(?,0)").run("conversation-1");
-  database.prepare("INSERT INTO whatsapp_messages(id,conversation_id,meta_message_id,direction,type,body,caption,status,created_at) VALUES(?,?,?,'inbound','text','Hola','', 'received', ?)").run("message-1", "conversation-1", "wamid-1", "2026-09-14T04:00:00.000Z");
   assert.equal(database.prepare("SELECT unread_count FROM whatsapp_conversations").get()?.unread_count, 1);
+  database.prepare("INSERT INTO whatsapp_conversations(id,unread_count) VALUES(?,0)").run("conversation-2");
+  database.prepare("INSERT INTO whatsapp_messages(id,conversation_id,meta_message_id,direction,type,body,caption,status,created_at) VALUES(?,?,?,'inbound','text','Hola','', 'received', ?)").run("message-2", "conversation-2", "wamid-2", "2026-09-14T04:00:00.000Z");
+  assert.equal(database.prepare("SELECT unread_count FROM whatsapp_conversations WHERE id='conversation-2'").get()?.unread_count, 1);
   database.close();
 });

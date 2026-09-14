@@ -3,7 +3,7 @@ import type { D1Database } from "@cloudflare/workers-types";
 import { getD1, getDb } from "../../../../db";
 import { contacts, leads, opportunities, whatsappConversations } from "../../../../db/schema";
 import { normalizePhone } from "../../../lib/crm";
-import { persistInboundWhatsAppMessage, runWhatsAppWebhookDelivery, updateWhatsAppDeliveryStatus, webhookClaimIsActive, type WhatsAppWebhookClaim, whatsappWebhookResponse } from "../../../lib/whatsapp-webhook";
+import { persistInboundWhatsAppMessage, renewWhatsAppWebhookClaim, runWhatsAppWebhookDelivery, updateWhatsAppDeliveryStatus, webhookClaimIsActive, type WhatsAppWebhookClaim, whatsappWebhookResponse } from "../../../lib/whatsapp-webhook";
 import { downloadMetaMedia, verifyWhatsAppSignature } from "../../../lib/whatsapp";
 import { env } from "cloudflare:workers";
 
@@ -45,12 +45,14 @@ export async function POST(request: Request) {
           const ordinal = messageOrdinal++;
           if (mediaId && ["image", "document", "audio", "video"].includes(type)) {
             if (!env.FILES) throw new Error("WHATSAPP_MEDIA_STORAGE_UNAVAILABLE");
+            if (!(await renewWhatsAppWebhookClaim(d1, claim, new Date().toISOString()))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
             const media = await downloadMetaMedia(mediaId);
             const mediaPart = String(message.id ?? ordinal).replace(/[^a-zA-Z0-9_.-]/g, "_");
             mediaKey = `whatsapp/${conversationId}/${eventHash}-${mediaPart}`;
             contentType = media.contentType;
-            if (!(await webhookClaimIsActive(d1, claim))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
+            if (!(await renewWhatsAppWebhookClaim(d1, claim, new Date().toISOString()))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
             await env.FILES.put(mediaKey, media.body, { httpMetadata: { contentType } });
+            if (!(await webhookClaimIsActive(d1, claim))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
           }
           await persistInboundWhatsAppMessage(d1, {
             id: crypto.randomUUID(),

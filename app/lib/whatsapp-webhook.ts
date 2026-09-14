@@ -179,6 +179,24 @@ export async function webhookClaimIsActive(d1: D1Database, claim: WhatsAppWebhoo
   return Boolean(row);
 }
 
+export async function renewWhatsAppWebhookClaim(
+  d1: D1Database,
+  claim: WhatsAppWebhookClaim,
+  now: string,
+  leaseMs = WHATSAPP_WEBHOOK_LEASE_MS,
+) {
+  const result = await d1
+    .prepare(
+      `UPDATE whatsapp_webhook_events
+       SET lease_until=?
+       WHERE event_hash=? AND processing_status='processing' AND attempt_count=?
+         AND (lease_until IS NULL OR lease_until>?)`,
+    )
+    .bind(leaseUntil(now, leaseMs), claim.eventHash, claim.attemptCount, now)
+    .run();
+  return Number(result.meta?.changes ?? 0) === 1;
+}
+
 function campaignStatusRank(status: string) {
   return { skipped: 0, queued: 1, sending: 1, uncertain: 1, sent: 2, delivered: 3, read: 4, failed: 5 }[status as "skipped" | "queued" | "sending" | "uncertain" | "sent" | "delivered" | "read" | "failed"] ?? -1;
 }
