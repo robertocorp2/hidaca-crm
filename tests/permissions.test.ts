@@ -81,6 +81,8 @@ test("permission previews use persisted role defaults from the server", async ()
   const userEditor = await readFile("app/app/users-admin-view.tsx", "utf8");
   assert.match(userEditor, /Prerequisito denegado/);
   assert.doesNotMatch(userEditor, /disabled=\{self \|\| locked/);
+  assert.match(userEditor, /disabled=\{self \|\| !access\.edit\}/);
+  assert.match(userEditor, /Permisos actualizados/);
 });
 
 test("catalog contains every requested module and shared view pairs", () => {

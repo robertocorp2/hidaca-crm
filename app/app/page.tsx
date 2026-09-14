@@ -152,7 +152,7 @@ export default async function OperationsPage({
       .orderBy(desc(activities.startAt))
       .limit(1_000) : Promise.resolve([]),
     may("oportunidades") && may("cotizaciones") ? db.select().from(opportunityQuotes).limit(2_000) : Promise.resolve([]),
-    invoiceFeatureEnabled && may("cuentas-cobrar")
+    may("cuentas-cobrar")
       ? getDashboardReceivableBalance()
       : Promise.resolve(null),
   ]);

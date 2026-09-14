@@ -45,9 +45,12 @@ test("dashboard receivables use normalized balances and expose a summary endpoin
   assert.match(route, /x\.status IN \('replaced', 'void', 'draft'\) THEN x\.status/);
   assert.match(billing, /legacyReceivables/);
   assert.match(page, /getDashboardReceivableBalance/);
+  assert.match(page, /may\("cuentas-cobrar"\)\s*\?/);
   assert.match(client, /initialReceivableBalance/);
   assert.match(client, /\/api\/receivables\?summary=1/);
-  assert.match(client, /viewHref\("receivables"\)/);
+  assert.match(client, /canOpenReceivables/);
+  assert.match(client, /canViewReceivables/);
+  assert.doesNotMatch(client, /records\s*\.filter\(\(record\) => record\.module === "facturas"\)/);
   assert.doesNotMatch(route, /LIMIT\s+1000/);
   assert.match(billing, /setLegacyRows\(\[\]\)/);
   assert.match(billing, /loadSequence/);

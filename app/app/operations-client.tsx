@@ -452,10 +452,7 @@ export function OperationsClient({
           !["Completado", "Cancelado"].includes(record.status),
       ).length,
       receivable:
-        receivableBalance ??
-        records
-          .filter((record) => record.module === "facturas")
-          .reduce((sum, record) => sum + record.balance, 0),
+        receivableBalance ?? 0,
       leads: leads.filter(
         (lead) => !["converted", "unqualified"].includes(lead.status),
       ).length,
@@ -1065,6 +1062,7 @@ export function OperationsClient({
                 records={records}
                 totals={totals}
                 initialNow={initialNow}
+                invoiceFeatureEnabled={invoiceFeatureEnabled}
                 onNavigate={(next, record) => {
                   if (record) applySelection(next, record);
                   else selectView(next);
@@ -1744,6 +1742,7 @@ function Dashboard({
   businesses,
   onNavigate,
   initialNow,
+  invoiceFeatureEnabled,
 }: {
   totals: {
     projects: number;
@@ -1761,7 +1760,11 @@ function Dashboard({
   businesses: BusinessRow[];
   onNavigate(view: View, record?: string): void;
   initialNow: number;
+  invoiceFeatureEnabled: boolean;
 }) {
+  const permissions = useContext(PermissionContext);
+  const canViewReceivables = permissions?.["cuentas-cobrar"]?.view ?? false;
+  const canOpenReceivables = invoiceFeatureEnabled && canViewReceivables;
   const upcomingActivities = activities
     .filter(
       (activity) =>
@@ -1865,7 +1868,7 @@ function Dashboard({
           <strong>{totals.projects}</strong>
           <small>En ejecución o seguimiento</small>
         </DashboardLink>
-        <DashboardLink
+        {canViewReceivables && (canOpenReceivables ? <DashboardLink
           className="metric-card metric-card-currency"
           href={viewHref("receivables")}
           onNavigate={() => onNavigate("receivables")}
@@ -1881,6 +1884,18 @@ function Dashboard({
           </strong>
           <small>Facturas con balance pendiente</small>
         </DashboardLink>
+        : <article className="metric-card metric-card-currency" aria-label="Balance por cobrar">
+          <span className="metric-heading">
+            <span className="metric-icon" aria-hidden="true">
+              RD$
+            </span>
+            <span>Balance por cobrar</span>
+          </span>
+          <strong title={money(totals.receivable)}>
+            {money(totals.receivable)}
+          </strong>
+          <small>Facturas con balance pendiente</small>
+        </article>)}
       </section>
       <section className="dashboard-grid">
         <article className="panel">

@@ -161,7 +161,7 @@ export function UsersAdminView({
           if (!permissions.ok) throw new Error(permissionResult.error);
         }
         setUsers((current) => current.map((item) => item.id === savedUser.id ? savedUser : item));
-        setMessage("Usuario y permisos actualizados.");
+        setMessage(access.edit ? "Usuario y permisos actualizados." : "Permisos actualizados.");
       }
       setEditor(null);
     } catch (error) {
@@ -220,10 +220,10 @@ export function UsersAdminView({
       <form className="user-editor" onSubmit={save}>
         <div className="user-tabs" role="tablist"><button aria-selected={tab === "general"} onClick={() => setTab("general")} role="tab" type="button">General</button>{access.administer && <button aria-selected={tab === "permissions"} onClick={() => setTab("permissions")} role="tab" type="button">Permisos</button>}</div>
         {tab === "general" ? <div className="user-general-grid">
-          <label htmlFor="user-editor-name">Nombre<input autoComplete="name" id="user-editor-name" name="name" required value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} /></label>
-          <label htmlFor="user-editor-email">Correo de ChatGPT<input autoComplete="email" disabled={self} id="user-editor-email" name="email" required type="email" value={editor.email} onChange={(event) => setEditor({ ...editor, email: event.target.value })} /></label>
-          <label htmlFor="user-editor-role">Rol<select autoComplete="off" disabled={self} id="user-editor-role" name="role" value={editor.role} onChange={(event) => { const role = event.target.value as StaffRole; const defaults = editor.roleDefaults[role]; setEditor({ ...editor, role, defaults, permissions: effectivePreview(role, defaults, editor.overrides) }); }}><option value="admin">Administrador</option><option value="operator">Operador</option><option value="viewer">Solo lectura</option></select></label>
-          <label htmlFor="user-editor-status">Estado<select autoComplete="off" disabled={self} id="user-editor-status" name="status" value={editor.active ? "active" : "inactive"} onChange={(event) => {
+          <label htmlFor="user-editor-name">Nombre<input autoComplete="name" disabled={self || !access.edit} id="user-editor-name" name="name" required value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} /></label>
+          <label htmlFor="user-editor-email">Correo de ChatGPT<input autoComplete="email" disabled={self || !access.edit} id="user-editor-email" name="email" required type="email" value={editor.email} onChange={(event) => setEditor({ ...editor, email: event.target.value })} /></label>
+          <label htmlFor="user-editor-role">Rol<select autoComplete="off" disabled={self || !access.edit} id="user-editor-role" name="role" value={editor.role} onChange={(event) => { const role = event.target.value as StaffRole; const defaults = editor.roleDefaults[role]; setEditor({ ...editor, role, defaults, permissions: effectivePreview(role, defaults, editor.overrides) }); }}><option value="admin">Administrador</option><option value="operator">Operador</option><option value="viewer">Solo lectura</option></select></label>
+          <label htmlFor="user-editor-status">Estado<select autoComplete="off" disabled={self || !access.edit} id="user-editor-status" name="status" value={editor.active ? "active" : "inactive"} onChange={(event) => {
             const active = event.target.value === "active";
             if (!active && editor.active) {
               confirm("Al desactivar este usuario perderá acceso a HIDACA de inmediato al guardar los cambios.", "Desactivar", async () => setEditor((current) => current ? { ...current, active: false } : current));
