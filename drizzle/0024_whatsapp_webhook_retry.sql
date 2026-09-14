@@ -26,7 +26,7 @@ SET delivery_token = 'legacy:' || id || ':' || CASE WHEN attempts > 0 THEN attem
     status = CASE WHEN attempts > 0 AND meta_message_id IS NULL THEN 'uncertain' WHEN status = 'sending' THEN 'uncertain' ELSE status END,
     error = CASE WHEN attempts > 0 AND meta_message_id IS NULL THEN COALESCE(error, 'Legacy send requires Meta reconciliation') WHEN status = 'sending' THEN COALESCE(error, 'Legacy send requires Meta reconciliation') ELSE error END,
     locked_at = CASE WHEN attempts > 0 AND meta_message_id IS NULL THEN NULL WHEN status = 'sending' THEN NULL ELSE locked_at END
-WHERE delivery_token IS NULL AND (attempts > 0 OR meta_message_id IS NOT NULL);--> statement-breakpoint
+WHERE delivery_token IS NULL AND (attempts > 0 OR meta_message_id IS NOT NULL OR status = 'sending');--> statement-breakpoint
 INSERT INTO `whatsapp_campaign_delivery_attempts`
   (id,recipient_id,delivery_token,meta_message_id,status,error,created_at,updated_at)
 SELECT 'legacy-attempt:' || r.id,
@@ -38,7 +38,7 @@ SELECT 'legacy-attempt:' || r.id,
        r.created_at,
        r.updated_at
 FROM `whatsapp_campaign_recipients` AS r
-WHERE r.delivery_token IS NOT NULL AND (r.attempts > 0 OR r.meta_message_id IS NOT NULL);--> statement-breakpoint
+WHERE r.delivery_token IS NOT NULL AND (r.attempts > 0 OR r.meta_message_id IS NOT NULL OR (r.status = 'uncertain' AND r.error = 'Legacy send requires Meta reconciliation'));--> statement-breakpoint
 UPDATE `whatsapp_webhook_events`
 SET processing_status = 'failed', processed_at = NULL,
     error = COALESCE(error, 'Legacy delivery had no durable completion marker')

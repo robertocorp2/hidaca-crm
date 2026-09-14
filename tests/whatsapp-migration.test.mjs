@@ -45,6 +45,7 @@ test("webhook migration makes legacy completion policy explicit and installs ato
     INSERT INTO whatsapp_webhook_events(event_hash,event_type,processing_status,received_at) VALUES('legacy-partial','batch','processed','2026-09-14T04:00:00.000Z');
     INSERT INTO whatsapp_webhook_events(event_hash,event_type,processing_status,received_at) VALUES('legacy-ignored','batch','ignored','2026-09-14T04:00:00.000Z');
     INSERT INTO whatsapp_campaign_recipients(id,attempts,meta_message_id,status,error,locked_at,created_at,updated_at) VALUES('recipient-legacy',2,NULL,'failed',NULL,NULL,'2026-09-14T04:00:00.000Z','2026-09-14T04:00:00.000Z');
+    INSERT INTO whatsapp_campaign_recipients(id,attempts,meta_message_id,status,error,locked_at,created_at,updated_at) VALUES('recipient-sending',0,NULL,'sending',NULL,'2026-09-14T04:00:00.000Z','2026-09-14T04:00:00.000Z','2026-09-14T04:00:00.000Z');
     INSERT INTO whatsapp_conversations(id,unread_count) VALUES('conversation-1',0);
     INSERT INTO whatsapp_messages(id,conversation_id,meta_message_id,direction,type,body,caption,status,created_at) VALUES('message-1','conversation-1','wamid-1','inbound','text','Hola','', 'received', '2026-09-14T04:00:00.000Z');
   `);
@@ -70,6 +71,15 @@ test("webhook migration makes legacy completion policy explicit and installs ato
     delivery_token: "legacy:recipient-legacy:2",
     status: "unreconciled",
     meta_message_id: null,
+  });
+  assert.deepEqual({ ...database.prepare("SELECT delivery_token,status,locked_at FROM whatsapp_campaign_recipients WHERE id='recipient-sending'").get() }, {
+    delivery_token: "legacy:recipient-sending:1",
+    status: "uncertain",
+    locked_at: null,
+  });
+  assert.deepEqual({ ...database.prepare("SELECT delivery_token,status FROM whatsapp_campaign_delivery_attempts WHERE recipient_id='recipient-sending'").get() }, {
+    delivery_token: "legacy:recipient-sending:1",
+    status: "unreconciled",
   });
 
   assert.equal(database.prepare("SELECT unread_count FROM whatsapp_conversations").get()?.unread_count, 1);
