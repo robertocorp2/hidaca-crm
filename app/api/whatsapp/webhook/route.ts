@@ -45,7 +45,7 @@ export async function POST(request: Request) {
           if (mediaId && ["image", "document", "audio", "video"].includes(type)) {
             if (!env.FILES) throw new Error("WHATSAPP_MEDIA_STORAGE_UNAVAILABLE");
             const media = await downloadMetaMedia(mediaId);
-            const mediaPart = String(message.id ?? ordinal).replace(/[^a-zA-Z0-9_.-]/g, "_");
+          const mediaPart = String(message.id ?? ordinal).replace(/[^a-zA-Z0-9_.-]/g, "_");
             mediaKey = `whatsapp/${conversationId}/${eventHash}-${mediaPart}`;
             contentType = media.contentType;
             await env.FILES.put(mediaKey, media.body, { httpMetadata: { contentType } });
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
           await persistInboundWhatsAppMessage(d1, {
             id: crypto.randomUUID(),
             conversationId,
-            metaMessageId: message.id ? String(message.id) : null,
+            metaMessageId: message.id ? String(message.id) : `hidaca:${eventHash}:${ordinal}`,
             type: ["text", "image", "document", "audio", "video", "sticker", "location"].includes(type) ? type : "unsupported",
             body: content?.body ?? "",
             caption: content?.caption ?? "",
@@ -76,8 +76,7 @@ export async function POST(request: Request) {
 
 async function upsertConversation(phoneNumberId: string, waId: string, name: string, now: string) {
   const db = getDb();
-  const [existing] = await db.select({ id: whatsappConversations.id }).from(whatsappConversations).where(and(eq(whatsappConversations.phoneNumberId, phoneNumberId), eq(whatsappConversations.waId, waId))).limit(1);
-  if (existing) return existing.id;
+  const [existing] = await db.select({ id: whatsappConversations.id, leadId: whatsappConversations.leadId, matchState: whatsappConversations.matchState }).from(whatsappConversations).where(and(eq(whatsappConversations.phoneNumberId, phoneNumberId), eq(whatsappConversations.waId, waId))).limit(1);
   const normalized = normalizePhone(waId);
   const [contactRows, leadRows] = await Promise.all([
     db.select({ id: contacts.id, businessId: contacts.businessId }).from(contacts).where(and(or(eq(contacts.normalizedPhone, normalized), eq(contacts.normalizedMobilePhone, normalized)), isNull(contacts.archivedAt))),
@@ -92,6 +91,17 @@ async function upsertConversation(phoneNumberId: string, waId: string, name: str
     const activeOpportunities = await db.select({ id: opportunities.id }).from(opportunities).where(and(eq(opportunities.businessId, businessId), isNull(opportunities.archivedAt), or(eq(opportunities.stage, "evaluation"), eq(opportunities.stage, "quote"), eq(opportunities.stage, "negotiation_review"))));
     if (activeOpportunities.length === 1) opportunityId = activeOpportunities[0].id;
     else if (activeOpportunities.length > 1) opportunityId = null;
+  }
+  if (existing) {
+    if (existing.leadId || existing.matchState !== "unmatched") return existing.id;
+    if (!contact && !lead && !ambiguous) {
+      const leadId = crypto.randomUUID();
+      await db.insert(leads).values({ id: leadId, businessName: name, contactName: name, email: "", normalizedEmail: "", phone: waId, normalizedPhone: normalizePhone(waId), source: "WhatsApp", status: "new", ownerEmail: "", notes: "Prospecto creado automáticamente desde WhatsApp.", createdBy: "whatsapp:webhook", createdAt: now, updatedAt: now, archivedAt: null, convertedBusinessId: null, convertedContactId: null, convertedOpportunityId: null, convertedAt: null, convertedBy: null });
+      await db.update(whatsappConversations).set({ leadId, matchState: "created_prospect", updatedAt: now }).where(eq(whatsappConversations.id, existing.id));
+    } else {
+      await db.update(whatsappConversations).set({ businessId, contactId: contact?.id ?? null, leadId: lead?.id ?? null, opportunityId, matchState: ambiguous ? "ambiguous" : "matched", updatedAt: now }).where(eq(whatsappConversations.id, existing.id));
+    }
+    return existing.id;
   }
   const id = crypto.randomUUID();
   await db.insert(whatsappConversations).values({ id, phoneNumberId, waId, displayName: name, profileName: name, businessId, contactId: contact?.id ?? null, leadId: lead?.id ?? null, opportunityId, matchState: ambiguous ? "ambiguous" : contact || lead ? "matched" : "unmatched", createdAt: now, updatedAt: now });
