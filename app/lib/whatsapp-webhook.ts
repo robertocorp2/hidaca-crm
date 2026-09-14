@@ -146,8 +146,15 @@ export async function persistInboundWhatsAppMessage(
   // The trigger-backed unread increment only runs for a newly inserted inbound
   // message. These timestamps are safe to replay after a partial attempt.
   await d1
-    .prepare("UPDATE whatsapp_conversations SET last_inbound_at=?,last_message_at=?,service_window_expires_at=?,updated_at=? WHERE id=?")
-    .bind(input.now, input.now, new Date(new Date(input.now).getTime() + 24 * 60 * 60 * 1000).toISOString(), input.now, input.conversationId)
+    .prepare(
+      `UPDATE whatsapp_conversations
+       SET last_inbound_at=CASE WHEN last_inbound_at IS NULL OR last_inbound_at < ? THEN ? ELSE last_inbound_at END,
+           last_message_at=CASE WHEN last_message_at IS NULL OR last_message_at < ? THEN ? ELSE last_message_at END,
+           service_window_expires_at=CASE WHEN service_window_expires_at IS NULL OR service_window_expires_at < ? THEN ? ELSE service_window_expires_at END,
+           updated_at=CASE WHEN updated_at < ? THEN ? ELSE updated_at END
+       WHERE id=?`,
+    )
+    .bind(input.now, input.now, input.now, input.now, new Date(new Date(input.now).getTime() + 24 * 60 * 60 * 1000).toISOString(), new Date(new Date(input.now).getTime() + 24 * 60 * 60 * 1000).toISOString(), input.now, input.now, input.conversationId)
     .run();
   return Boolean(inserted);
 }

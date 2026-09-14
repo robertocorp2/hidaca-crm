@@ -92,8 +92,9 @@ async function upsertConversation(phoneNumberId: string, waId: string, name: str
   }
   if (existing) {
     if (existing.leadId || existing.matchState !== "unmatched") return existing.id;
-    if (!contact && !lead && !ambiguous) {
-      const leadId = `whatsapp:${existing.id}:lead`;
+    const automaticLeadId = `whatsapp:${existing.id}:lead`;
+    if (!contact && !ambiguous && (!lead || lead.id === automaticLeadId)) {
+      const leadId = automaticLeadId;
       await db.insert(leads).values({ id: leadId, businessName: name, contactName: name, email: "", normalizedEmail: "", phone: waId, normalizedPhone: normalizePhone(waId), source: "WhatsApp", status: "new", ownerEmail: "", notes: "Prospecto creado automáticamente desde WhatsApp.", createdBy: "whatsapp:webhook", createdAt: now, updatedAt: now, archivedAt: null, convertedBusinessId: null, convertedContactId: null, convertedOpportunityId: null, convertedAt: null, convertedBy: null }).onConflictDoNothing({ target: leads.id });
       await db.update(whatsappConversations).set({ leadId, matchState: "created_prospect", updatedAt: now }).where(eq(whatsappConversations.id, existing.id));
     } else {
@@ -112,5 +113,8 @@ async function upsertConversation(phoneNumberId: string, waId: string, name: str
 }
 
 async function applyStatus(metaMessageId: string, incoming: string, errors: unknown, now: string) {
-  await updateWhatsAppMessageStatus(getD1(), metaMessageId, incoming, errors, now);
+  if (!["sent", "delivered", "read", "failed"].includes(incoming)) return;
+  if (!(await updateWhatsAppMessageStatus(getD1(), metaMessageId, incoming, errors, now))) {
+    throw new Error("WHATSAPP_STATUS_MESSAGE_NOT_FOUND");
+  }
 }

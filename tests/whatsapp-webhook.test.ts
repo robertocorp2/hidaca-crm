@@ -120,8 +120,10 @@ test("duplicate inbound message persistence does not double-count unread message
   const input = { id: "message-1", conversationId: "conversation-1", metaMessageId: "wamid-1", type: "text", body: "Hola", caption: "", mediaId: null, mediaKey: null, contentType: null, now: options.now };
   assert.equal(await persistInboundWhatsAppMessage(d1, input), true);
   assert.equal(await persistInboundWhatsAppMessage(d1, { ...input, id: "message-2", now: "2026-09-14T04:00:01.000Z" }), false);
+  assert.equal(await persistInboundWhatsAppMessage(d1, { ...input, id: "message-3", now: "2026-09-14T03:00:00.000Z" }), false);
   assert.equal(sqlite.prepare("SELECT unread_count FROM whatsapp_conversations").get()?.unread_count, 1);
   assert.equal(sqlite.prepare("SELECT count(*) AS count FROM whatsapp_messages").get()?.count, 1);
+  assert.equal(sqlite.prepare("SELECT last_inbound_at,service_window_expires_at FROM whatsapp_conversations").get()?.last_inbound_at, "2026-09-14T04:00:01.000Z");
   sqlite.close();
 });
 
