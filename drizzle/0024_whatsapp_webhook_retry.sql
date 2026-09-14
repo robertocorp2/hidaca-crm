@@ -23,9 +23,9 @@ CREATE INDEX `whatsapp_webhook_events_processing_idx` ON `whatsapp_webhook_event
 -- sends during retry/reconciliation.
 UPDATE `whatsapp_campaign_recipients`
 SET delivery_token = 'legacy:' || id || ':' || CASE WHEN attempts > 0 THEN attempts ELSE 1 END,
-    status = CASE WHEN status = 'sending' THEN 'uncertain' ELSE status END,
-    error = CASE WHEN status = 'sending' THEN COALESCE(error, 'Legacy send requires Meta reconciliation') ELSE error END,
-    locked_at = CASE WHEN status = 'sending' THEN NULL ELSE locked_at END
+    status = CASE WHEN attempts > 0 AND meta_message_id IS NULL THEN 'uncertain' WHEN status = 'sending' THEN 'uncertain' ELSE status END,
+    error = CASE WHEN attempts > 0 AND meta_message_id IS NULL THEN COALESCE(error, 'Legacy send requires Meta reconciliation') WHEN status = 'sending' THEN COALESCE(error, 'Legacy send requires Meta reconciliation') ELSE error END,
+    locked_at = CASE WHEN attempts > 0 AND meta_message_id IS NULL THEN NULL WHEN status = 'sending' THEN NULL ELSE locked_at END
 WHERE delivery_token IS NULL AND (attempts > 0 OR meta_message_id IS NOT NULL);--> statement-breakpoint
 INSERT INTO `whatsapp_campaign_delivery_attempts`
   (id,recipient_id,delivery_token,meta_message_id,status,error,created_at,updated_at)

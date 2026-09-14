@@ -24,20 +24,31 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   let sent = 0; let failed = 0;
   for (const recipient of recipients) {
     const claimedAt = new Date().toISOString();
-    const [claimed] = await db.update(whatsappCampaignRecipients)
-      .set({ status: "sending", lockedAt: claimedAt, deliveryToken: `${recipient.id}:${recipient.attempts + 1}`, error: null, updatedAt: claimedAt })
-      .where(and(
-        eq(whatsappCampaignRecipients.id, recipient.id),
-        inArray(whatsappCampaignRecipients.status, ["queued", "failed"]),
-        sql`EXISTS (SELECT 1 FROM whatsapp_campaigns AS c WHERE c.id=${id} AND c.status <> 'paused')`,
-      ))
-      .returning({ id: whatsappCampaignRecipients.id });
-    if (!claimed) continue;
     const deliveryToken = `${recipient.id}:${recipient.attempts + 1}`;
+    const attemptId = crypto.randomUUID();
+    // Claiming the recipient and recording the attempt must commit together;
+    // otherwise a crash between two writes can strand a send without history.
+    const claimBatch = await getD1().batch([
+      getD1().prepare(
+        `UPDATE whatsapp_campaign_recipients
+         SET status='sending', locked_at=?, delivery_token=?, error=NULL, updated_at=?
+         WHERE id=? AND status IN ('queued','failed')
+           AND EXISTS (SELECT 1 FROM whatsapp_campaigns AS c WHERE c.id=? AND c.status <> 'paused')
+         RETURNING id`,
+      ).bind(claimedAt, deliveryToken, claimedAt, recipient.id, id),
+      getD1().prepare(
+        `INSERT INTO whatsapp_campaign_delivery_attempts
+          (id,recipient_id,delivery_token,meta_message_id,status,error,created_at,updated_at)
+         SELECT ?,id,?,NULL,'sending',NULL,?,?
+         FROM whatsapp_campaign_recipients
+         WHERE id=? AND status='sending' AND delivery_token=?`,
+      ).bind(attemptId, deliveryToken, claimedAt, claimedAt, recipient.id, deliveryToken),
+    ]);
+    const claimed = Boolean((claimBatch[0]?.results ?? [])[0]);
+    if (!claimed) continue;
     let providerAccepted = false;
     let providerMetaMessageId: string | null = null;
     try {
-      await db.insert(whatsappCampaignDeliveryAttempts).values({ id: crypto.randomUUID(), recipientId: recipient.id, deliveryToken, metaMessageId: null, status: "sending", error: null, createdAt: claimedAt, updatedAt: claimedAt });
       const result = await sendWhatsAppMessage(recipient.phone, { type: "template", template: { name: campaign.templateName, language: { code: campaign.templateLanguage } }, biz_opaque_callback_data: deliveryToken });
       providerAccepted = true;
       providerMetaMessageId = result.messages?.[0]?.id?.trim() || null;
@@ -58,7 +69,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
       if (updated) sent += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Meta failure";
-      const uncertain = providerAccepted || /WHATSAPP_PROVIDER_RESPONSE_INVALID|timeout|timed out|abort|network|fetch failed/i.test(message);
+      const uncertain = providerAccepted || /WHATSAPP_PROVIDER_RESPONSE_INVALID|META_GRAPH_(?:429|5\d\d)|timeout|timed out|abort|network|fetch failed/i.test(message);
       const [updated] = await db.update(whatsappCampaignRecipients)
         .set({ status: uncertain ? "uncertain" : "failed", metaMessageId: providerMetaMessageId, error: message.slice(0, 500), attempts: recipient.attempts + 1, lockedAt: null, updatedAt: new Date().toISOString() })
         .where(and(eq(whatsappCampaignRecipients.id, recipient.id), eq(whatsappCampaignRecipients.status, "sending")))

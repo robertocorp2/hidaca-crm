@@ -63,7 +63,7 @@ test("webhook migration makes legacy completion policy explicit and installs ato
   });
   assert.deepEqual({ ...database.prepare("SELECT delivery_token,status FROM whatsapp_campaign_recipients WHERE id='recipient-legacy'").get() }, {
     delivery_token: "legacy:recipient-legacy:2",
-    status: "failed",
+    status: "uncertain",
   });
   assert.deepEqual({ ...database.prepare("SELECT recipient_id,delivery_token,status,meta_message_id FROM whatsapp_campaign_delivery_attempts WHERE recipient_id='recipient-legacy'").get() }, {
     recipient_id: "recipient-legacy",
