@@ -69,8 +69,12 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     } catch (error) {
       const message = error instanceof Error ? error.message : "Meta failure";
       // A 429 is a definite rate-limit rejection and remains retryable as
-      // failed; 5xx/transport failures may have been accepted by Meta.
-      const uncertain = providerAccepted || /WHATSAPP_PROVIDER_RESPONSE_INVALID|META_GRAPH_5\d\d|timeout|timed out|abort|network|fetch failed/i.test(message);
+      // failed; 5xx/transport failures may have been accepted by Meta. Parse
+      // the provider status before inspecting free-form error text.
+      const graphStatus = /^META_GRAPH_(\d{3})(?:$|:)/i.exec(message)?.[1];
+      const uncertain = providerAccepted || (graphStatus
+        ? Number(graphStatus) >= 500
+        : /WHATSAPP_PROVIDER_RESPONSE_INVALID|timeout|timed out|abort|network|fetch failed/i.test(message));
       const [updated] = await db.update(whatsappCampaignRecipients)
         .set({ status: uncertain ? "uncertain" : "failed", metaMessageId: providerMetaMessageId, error: message.slice(0, 500), attempts: recipient.attempts + 1, lockedAt: null, updatedAt: new Date().toISOString() })
         .where(and(eq(whatsappCampaignRecipients.id, recipient.id), eq(whatsappCampaignRecipients.status, "sending")))
