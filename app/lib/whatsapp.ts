@@ -59,7 +59,15 @@ export async function sendWhatsAppMessage(to: string, payload: Record<string, un
     method: "POST",
     body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to: normalizeWhatsAppNumber(to), ...payload }),
   });
-  return response.json() as Promise<{ messages?: Array<{ id: string }> }>;
+  let result: unknown;
+  try {
+    result = await response.json();
+  } catch {
+    throw new Error("WHATSAPP_PROVIDER_RESPONSE_INVALID");
+  }
+  const messageId = (result as { messages?: Array<{ id?: unknown }> } | null)?.messages?.[0]?.id;
+  if (typeof messageId !== "string" || !messageId.trim()) throw new Error("WHATSAPP_PROVIDER_RESPONSE_INVALID");
+  return result as { messages: Array<{ id: string }> };
 }
 
 export async function markWhatsAppMessageRead(messageId: string) {

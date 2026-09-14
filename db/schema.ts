@@ -2554,10 +2554,14 @@ export const whatsappWebhookEvents = sqliteTable("whatsapp_webhook_events", {
   eventHash: text("event_hash").notNull(),
   eventType: text("event_type").notNull(),
   metaMessageId: text("meta_message_id"),
-  processingStatus: text("processing_status", { enum: ["processed", "ignored", "failed"] }).notNull(),
+  processingStatus: text("processing_status", { enum: ["received", "processing", "processed", "ignored", "failed"] }).notNull(),
   error: text("error"),
   receivedAt: text("received_at").notNull(),
   processedAt: text("processed_at"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  lastAttemptAt: text("last_attempt_at"),
+  processingStartedAt: text("processing_started_at"),
+  leaseUntil: text("lease_until"),
 }, (table) => [uniqueIndex("whatsapp_webhook_events_hash_unique").on(table.eventHash), index("whatsapp_webhook_events_received_idx").on(table.receivedAt)]);
 
 export const whatsappCampaigns = sqliteTable("whatsapp_campaigns", {
@@ -2587,12 +2591,24 @@ export const whatsappCampaignRecipients = sqliteTable("whatsapp_campaign_recipie
   displayName: text("display_name").notNull().default(""),
   status: text("status", { enum: ["queued", "sending", "sent", "delivered", "read", "failed", "uncertain", "skipped"] }).notNull().default("queued"),
   metaMessageId: text("meta_message_id"),
+  deliveryToken: text("delivery_token"),
   error: text("error"),
   attempts: integer("attempts").notNull().default(0),
   lockedAt: text("locked_at"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (table) => [uniqueIndex("whatsapp_campaign_recipients_phone_unique").on(table.campaignId, table.phone), index("whatsapp_campaign_recipients_queue_idx").on(table.campaignId, table.status)]);
+
+export const whatsappCampaignDeliveryAttempts = sqliteTable("whatsapp_campaign_delivery_attempts", {
+  id: text("id").primaryKey(),
+  recipientId: text("recipient_id").notNull().references(() => whatsappCampaignRecipients.id, { onDelete: "cascade" }),
+  deliveryToken: text("delivery_token").notNull(),
+  metaMessageId: text("meta_message_id"),
+  status: text("status").notNull(),
+  error: text("error"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [uniqueIndex("whatsapp_campaign_delivery_attempts_token_unique").on(table.deliveryToken), uniqueIndex("whatsapp_campaign_delivery_attempts_meta_unique").on(table.metaMessageId), index("whatsapp_campaign_delivery_attempts_recipient_idx").on(table.recipientId)]);
 
 export const aiProviderConfigs = sqliteTable("ai_provider_configs", {
   id: text("id").primaryKey(),
