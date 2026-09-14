@@ -10,6 +10,9 @@ type WebhookEventRow = {
   lease_until: string | null;
 };
 
+const whatsappStatusRank = { received: 0, uncertain: 1, sent: 2, delivered: 3, read: 4, failed: 5 } as const;
+const whatsappMessageStatuses = Object.keys(whatsappStatusRank) as Array<keyof typeof whatsappStatusRank>;
+
 type WebhookDeliveryClaim =
   | { status: "claimed"; attemptCount: number }
   | { status: "duplicate"; attemptCount: number }
@@ -147,4 +150,32 @@ export async function persistInboundWhatsAppMessage(
     .bind(input.now, input.now, new Date(new Date(input.now).getTime() + 24 * 60 * 60 * 1000).toISOString(), input.now, input.conversationId)
     .run();
   return Boolean(inserted);
+}
+
+export async function updateWhatsAppMessageStatus(d1: D1Database, metaMessageId: string, incoming: string, errors: unknown, now: string) {
+  if (!(incoming in whatsappStatusRank)) return false;
+  const incomingRank = whatsappStatusRank[incoming as keyof typeof whatsappStatusRank];
+  const allowedStatuses = incoming === "failed"
+    ? whatsappMessageStatuses
+    : whatsappMessageStatuses.filter(status => whatsappStatusRank[status] <= incomingRank);
+  const error = Array.isArray(errors) ? JSON.stringify(errors).slice(0, 1000) : null;
+  const placeholders = allowedStatuses.map(() => "?").join(",");
+  const result = await d1
+    .prepare(
+      `UPDATE whatsapp_messages
+       SET status=?, error_message=?,
+           delivered_at=CASE WHEN ?='delivered' THEN COALESCE(delivered_at,?) ELSE delivered_at END,
+           read_at=CASE WHEN ?='read' THEN COALESCE(read_at,?) ELSE read_at END,
+           failed_at=CASE WHEN ?='failed' THEN COALESCE(failed_at,?) ELSE failed_at END
+       WHERE meta_message_id=? AND status IN (${placeholders})`,
+    )
+    .bind(incoming, error, incoming, now, incoming, now, incoming, now, metaMessageId, ...allowedStatuses)
+    .run();
+  return Number(result.meta?.changes ?? 0) === 1;
+}
+
+export function whatsappWebhookResponse(status: "completed" | "duplicate" | "in_flight") {
+  if (status === "duplicate") return Response.json({ ok: true, duplicate: true });
+  if (status === "in_flight") return Response.json({ ok: false, retryable: true }, { status: 500, headers: { "Retry-After": "5" } });
+  return Response.json({ ok: true });
 }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import test from "node:test";
 import type { D1Database, D1PreparedStatement, D1Result } from "@cloudflare/workers-types";
-import { persistInboundWhatsAppMessage, runWhatsAppWebhookDelivery } from "../app/lib/whatsapp-webhook";
+import { persistInboundWhatsAppMessage, runWhatsAppWebhookDelivery, updateWhatsAppMessageStatus, whatsappWebhookResponse } from "../app/lib/whatsapp-webhook";
 
 function database() {
   const sqlite = new DatabaseSync(":memory:");
@@ -38,10 +38,14 @@ function database() {
       body TEXT NOT NULL,
       caption TEXT NOT NULL,
       status TEXT NOT NULL,
+      error_message TEXT,
       media_id TEXT,
       media_key TEXT,
       content_type TEXT,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      delivered_at TEXT,
+      read_at TEXT,
+      failed_at TEXT
     );
     CREATE TRIGGER whatsapp_messages_inbound_unread_after_insert
     AFTER INSERT ON whatsapp_messages
@@ -119,4 +123,25 @@ test("duplicate inbound message persistence does not double-count unread message
   assert.equal(sqlite.prepare("SELECT unread_count FROM whatsapp_conversations").get()?.unread_count, 1);
   assert.equal(sqlite.prepare("SELECT count(*) AS count FROM whatsapp_messages").get()?.count, 1);
   sqlite.close();
+});
+
+test("status webhooks advance atomically and never regress a failed message", async () => {
+  const { sqlite, d1 } = database();
+  sqlite.prepare("INSERT INTO whatsapp_conversations(id,updated_at) VALUES(?,?)").run("conversation-1", options.now);
+  sqlite.prepare("INSERT INTO whatsapp_messages(id,conversation_id,meta_message_id,direction,type,body,caption,status,created_at) VALUES(?,?,?,'outbound','text','','','sent',?)").run("message-1", "conversation-1", "wamid-status", options.now);
+  assert.equal(await updateWhatsAppMessageStatus(d1, "wamid-status", "delivered", null, options.now), true);
+  assert.equal(await updateWhatsAppMessageStatus(d1, "wamid-status", "failed", [{ code: "timeout" }], "2026-09-14T04:00:01.000Z"), true);
+  assert.equal(await updateWhatsAppMessageStatus(d1, "wamid-status", "delivered", null, "2026-09-14T04:00:02.000Z"), false);
+  assert.deepEqual({ ...sqlite.prepare("SELECT status,delivered_at,failed_at FROM whatsapp_messages").get() }, { status: "failed", delivered_at: options.now, failed_at: "2026-09-14T04:00:01.000Z" });
+  sqlite.close();
+});
+
+test("provider response mapping keeps duplicates acknowledged and active work retryable", async () => {
+  const duplicate = whatsappWebhookResponse("duplicate");
+  assert.equal(duplicate.status, 200);
+  assert.deepEqual(await duplicate.json(), { ok: true, duplicate: true });
+  const inFlight = whatsappWebhookResponse("in_flight");
+  assert.equal(inFlight.status, 500);
+  assert.equal(inFlight.headers.get("Retry-After"), "5");
+  assert.deepEqual(await inFlight.json(), { ok: false, retryable: true });
 });

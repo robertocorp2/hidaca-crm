@@ -1,9 +1,9 @@
 import { and, eq, isNull, or } from "drizzle-orm";
 import { getD1, getDb } from "../../../../db";
-import { contacts, leads, opportunities, whatsappConversations, whatsappMessages } from "../../../../db/schema";
+import { contacts, leads, opportunities, whatsappConversations } from "../../../../db/schema";
 import { normalizePhone } from "../../../lib/crm";
-import { persistInboundWhatsAppMessage, runWhatsAppWebhookDelivery } from "../../../lib/whatsapp-webhook";
-import { downloadMetaMedia, nextWhatsAppStatus, verifyWhatsAppSignature } from "../../../lib/whatsapp";
+import { persistInboundWhatsAppMessage, runWhatsAppWebhookDelivery, updateWhatsAppMessageStatus, whatsappWebhookResponse } from "../../../lib/whatsapp-webhook";
+import { downloadMetaMedia, verifyWhatsAppSignature } from "../../../lib/whatsapp";
 import { env } from "cloudflare:workers";
 
 export async function GET(request: Request) {
@@ -66,9 +66,7 @@ export async function POST(request: Request) {
         for (const status of (value.statuses as Array<Record<string, unknown>> | undefined) ?? []) await applyStatus(String(status.id ?? ""), String(status.status ?? ""), status.errors, now);
       }
     });
-    if (delivery.status === "duplicate") return Response.json({ ok: true, duplicate: true });
-    if (delivery.status === "in_flight") return Response.json({ ok: false, retryable: true }, { status: 500, headers: { "Retry-After": "5" } });
-    return Response.json({ ok: true });
+    return whatsappWebhookResponse(delivery.status);
   } catch {
     return Response.json({ error: "Webhook processing failed" }, { status: 500 });
   }
@@ -95,8 +93,8 @@ async function upsertConversation(phoneNumberId: string, waId: string, name: str
   if (existing) {
     if (existing.leadId || existing.matchState !== "unmatched") return existing.id;
     if (!contact && !lead && !ambiguous) {
-      const leadId = crypto.randomUUID();
-      await db.insert(leads).values({ id: leadId, businessName: name, contactName: name, email: "", normalizedEmail: "", phone: waId, normalizedPhone: normalizePhone(waId), source: "WhatsApp", status: "new", ownerEmail: "", notes: "Prospecto creado automáticamente desde WhatsApp.", createdBy: "whatsapp:webhook", createdAt: now, updatedAt: now, archivedAt: null, convertedBusinessId: null, convertedContactId: null, convertedOpportunityId: null, convertedAt: null, convertedBy: null });
+      const leadId = `whatsapp:${existing.id}:lead`;
+      await db.insert(leads).values({ id: leadId, businessName: name, contactName: name, email: "", normalizedEmail: "", phone: waId, normalizedPhone: normalizePhone(waId), source: "WhatsApp", status: "new", ownerEmail: "", notes: "Prospecto creado automáticamente desde WhatsApp.", createdBy: "whatsapp:webhook", createdAt: now, updatedAt: now, archivedAt: null, convertedBusinessId: null, convertedContactId: null, convertedOpportunityId: null, convertedAt: null, convertedBy: null }).onConflictDoNothing({ target: leads.id });
       await db.update(whatsappConversations).set({ leadId, matchState: "created_prospect", updatedAt: now }).where(eq(whatsappConversations.id, existing.id));
     } else {
       await db.update(whatsappConversations).set({ businessId, contactId: contact?.id ?? null, leadId: lead?.id ?? null, opportunityId, matchState: ambiguous ? "ambiguous" : "matched", updatedAt: now }).where(eq(whatsappConversations.id, existing.id));
@@ -106,18 +104,13 @@ async function upsertConversation(phoneNumberId: string, waId: string, name: str
   const id = crypto.randomUUID();
   await db.insert(whatsappConversations).values({ id, phoneNumberId, waId, displayName: name, profileName: name, businessId, contactId: contact?.id ?? null, leadId: lead?.id ?? null, opportunityId, matchState: ambiguous ? "ambiguous" : contact || lead ? "matched" : "unmatched", createdAt: now, updatedAt: now });
   if (!contact && !lead && !ambiguous) {
-    const leadId = crypto.randomUUID();
-    await db.insert(leads).values({ id: leadId, businessName: name, contactName: name, email: "", normalizedEmail: "", phone: waId, normalizedPhone: normalizePhone(waId), source: "WhatsApp", status: "new", ownerEmail: "", notes: "Prospecto creado automáticamente desde WhatsApp.", createdBy: "whatsapp:webhook", createdAt: now, updatedAt: now, archivedAt: null, convertedBusinessId: null, convertedContactId: null, convertedOpportunityId: null, convertedAt: null, convertedBy: null });
+    const leadId = `whatsapp:${id}:lead`;
+    await db.insert(leads).values({ id: leadId, businessName: name, contactName: name, email: "", normalizedEmail: "", phone: waId, normalizedPhone: normalizePhone(waId), source: "WhatsApp", status: "new", ownerEmail: "", notes: "Prospecto creado automáticamente desde WhatsApp.", createdBy: "whatsapp:webhook", createdAt: now, updatedAt: now, archivedAt: null, convertedBusinessId: null, convertedContactId: null, convertedOpportunityId: null, convertedAt: null, convertedBy: null }).onConflictDoNothing({ target: leads.id });
     await db.update(whatsappConversations).set({ leadId, matchState: "created_prospect" }).where(eq(whatsappConversations.id, id));
   }
   return id;
 }
 
 async function applyStatus(metaMessageId: string, incoming: string, errors: unknown, now: string) {
-  const db = getDb();
-  const [message] = await db.select().from(whatsappMessages).where(eq(whatsappMessages.metaMessageId, metaMessageId)).limit(1);
-  if (!message || !["sent", "delivered", "read", "failed"].includes(incoming)) return;
-  const status = nextWhatsAppStatus(message.status as never, incoming as never);
-  const error = Array.isArray(errors) ? JSON.stringify(errors).slice(0, 1000) : null;
-  await db.update(whatsappMessages).set({ status, errorMessage: error, deliveredAt: status === "delivered" ? now : message.deliveredAt, readAt: status === "read" ? now : message.readAt, failedAt: status === "failed" ? now : message.failedAt }).where(eq(whatsappMessages.id, message.id));
+  await updateWhatsAppMessageStatus(getD1(), metaMessageId, incoming, errors, now);
 }
