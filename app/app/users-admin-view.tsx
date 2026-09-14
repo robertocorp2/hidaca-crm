@@ -28,8 +28,9 @@ import {
 
 type Override = { module: PermissionModuleKey; action: PermissionAction; effect: PermissionEffect };
 type PermissionDefault = { module: string; action: string; allowed: boolean };
-type PermissionPayload = { defaults: PermissionDefault[]; overrides: Override[]; permissions: EffectivePermissions };
-type Editor = { user: StaffUser | null; name: string; email: string; role: StaffRole; active: boolean; defaults: PermissionDefault[]; overrides: Override[]; permissions: EffectivePermissions };
+type RoleDefaults = Record<StaffRole, PermissionDefault[]>;
+type PermissionPayload = { defaults: PermissionDefault[]; overrides: Override[]; permissions: EffectivePermissions; persistedRoleDefaults?: RoleDefaults };
+type Editor = { user: StaffUser | null; name: string; email: string; role: StaffRole; active: boolean; defaults: PermissionDefault[]; roleDefaults: RoleDefaults; overrides: Override[]; permissions: EffectivePermissions };
 
 function effectivePreview(role: StaffRole, defaults: PermissionDefault[], overrides: Override[]): EffectivePermissions {
   return resolveEffectivePermissions(role, defaults, overrides);
@@ -39,6 +40,14 @@ function builtInDefaults(role: StaffRole): PermissionDefault[] {
   return Object.entries(rolePermissionDefaults[role]).flatMap(([module, actions]) =>
     Object.entries(actions).map(([action, allowed]) => ({ module, action, allowed })),
   );
+}
+
+function roleDefaultsFrom(payload: PermissionPayload): RoleDefaults {
+  const persisted: Partial<RoleDefaults> = payload.persistedRoleDefaults ?? {};
+  return Object.fromEntries((["admin", "operator", "viewer"] as StaffRole[]).map((role) => [
+    role,
+    persisted[role]?.length ? persisted[role] : builtInDefaults(role),
+  ])) as RoleDefaults;
 }
 
 function roleLabel(role: StaffRole) {
@@ -72,18 +81,28 @@ export function UsersAdminView({
       const response = await fetch(`/api/users/${user.id}/permissions`);
       const result = (await response.json()) as PermissionPayload & { error?: string };
       if (!response.ok) throw new Error(result.error);
-      setEditor({ user, name: user.name, email: user.email, role: user.role, active: user.active, ...result });
+      setEditor({ user, name: user.name, email: user.email, role: user.role, active: user.active, defaults: result.defaults, roleDefaults: roleDefaultsFrom(result), overrides: result.overrides, permissions: result.permissions });
       setTab("general");
     } catch (error) {
       setMessage(error instanceof Error && error.message ? error.message : "No se pudieron cargar los permisos.");
     } finally { setBusy(false); }
   }
 
-  function openNew() {
+  async function openNew() {
+    setBusy(true);
+    setMessage("");
     const role: StaffRole = "operator";
-    const defaults = builtInDefaults(role);
-    setEditor({ user: null, name: "", email: "", role, active: true, defaults, overrides: [], permissions: effectivePreview(role, defaults, []) });
-    setTab("general");
+    try {
+      const response = await fetch("/api/users/permissions");
+      const result = (await response.json()) as PermissionPayload & { error?: string };
+      if (!response.ok) throw new Error(result.error);
+      const roleDefaults = roleDefaultsFrom(result);
+      const defaults = roleDefaults[role];
+      setEditor({ user: null, name: "", email: "", role, active: true, defaults, roleDefaults, overrides: [], permissions: effectivePreview(role, defaults, []) });
+      setTab("general");
+    } catch (error) {
+      setMessage(error instanceof Error && error.message ? error.message : "No se pudieron cargar los permisos iniciales.");
+    } finally { setBusy(false); }
   }
 
   function setOverride(moduleKey: PermissionModuleKey, action: PermissionAction, effect: "inherit" | PermissionEffect) {
@@ -181,7 +200,7 @@ export function UsersAdminView({
         {/* The export endpoint returns a downloadable JSON backup rather than an application page. */}
         {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
         <a className="secondary-button" href="/api/users/export">Exportar seguridad</a>
-      </>}{access.create && <button className="primary-button" onClick={openNew} type="button">+ Autorizar usuario</button>}</div>} description="Administra el acceso y los permisos efectivos por módulo." eyebrow="Seguridad" title="Usuarios autorizados" />
+      </>}{access.create && <button className="primary-button" onClick={() => void openNew()} type="button">+ Autorizar usuario</button>}</div>} description="Administra el acceso y los permisos efectivos por módulo." eyebrow="Seguridad" title="Usuarios autorizados" />
     <div className="toolbar toolbar-filters">
       <AutocompleteInput ariaLabel="Buscar usuarios" onChange={(value) => { setListQuery(value); setPage(1); }} onSelect={(option) => { setListQuery(option.label); setPage(1); }} options={filteredUsers.slice(0, 8).map((user) => ({ id: String(user.id), label: user.name, secondary: user.email }))} placeholder="Escribe un nombre o correo…" value={listQuery} />
       <select aria-label="Filtrar usuarios por rol" onChange={(event) => { setRoleFilter(event.target.value); setPage(1); }} value={roleFilter}><option value="">Todos los roles</option><option value="admin">Administrador</option><option value="operator">Operador</option><option value="viewer">Solo lectura</option></select>
@@ -203,7 +222,7 @@ export function UsersAdminView({
         {tab === "general" ? <div className="user-general-grid">
           <label htmlFor="user-editor-name">Nombre<input autoComplete="name" id="user-editor-name" name="name" required value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} /></label>
           <label htmlFor="user-editor-email">Correo de ChatGPT<input autoComplete="email" disabled={self} id="user-editor-email" name="email" required type="email" value={editor.email} onChange={(event) => setEditor({ ...editor, email: event.target.value })} /></label>
-          <label htmlFor="user-editor-role">Rol<select autoComplete="off" disabled={self} id="user-editor-role" name="role" value={editor.role} onChange={(event) => { const role = event.target.value as StaffRole; const defaults = builtInDefaults(role); setEditor({ ...editor, role, defaults, permissions: effectivePreview(role, defaults, editor.overrides) }); }}><option value="admin">Administrador</option><option value="operator">Operador</option><option value="viewer">Solo lectura</option></select></label>
+          <label htmlFor="user-editor-role">Rol<select autoComplete="off" disabled={self} id="user-editor-role" name="role" value={editor.role} onChange={(event) => { const role = event.target.value as StaffRole; const defaults = editor.roleDefaults[role]; setEditor({ ...editor, role, defaults, permissions: effectivePreview(role, defaults, editor.overrides) }); }}><option value="admin">Administrador</option><option value="operator">Operador</option><option value="viewer">Solo lectura</option></select></label>
           <label htmlFor="user-editor-status">Estado<select autoComplete="off" disabled={self} id="user-editor-status" name="status" value={editor.active ? "active" : "inactive"} onChange={(event) => {
             const active = event.target.value === "active";
             if (!active && editor.active) {

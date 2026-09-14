@@ -25,11 +25,12 @@ test("admin user editor exposes stable field metadata", async () => {
 });
 
 test("dashboard receivables use normalized balances and expose a summary endpoint", async () => {
-  const [financials, route, page, client] = await Promise.all([
+  const [financials, route, page, client, billing] = await Promise.all([
     read("../app/lib/dashboard-financials.ts"),
     read("../app/api/receivables/route.ts"),
     read("../app/app/page.tsx"),
     read("../app/app/operations-client.tsx"),
+    read("../app/app/billing-view.tsx"),
   ]);
   assert.match(financials, /payment_allocations/);
   assert.match(financials, /credit_note_applications/);
@@ -38,6 +39,9 @@ test("dashboard receivables use normalized balances and expose a summary endpoin
   assert.match(route, /totalBalance/);
   assert.match(route, /normalized_invoice_read_model/);
   assert.match(route, /balance_amount_snapshot IS NOT NULL/);
+  assert.match(route, /legacyReceivables/);
+  assert.match(route, /x\.status IN \('replaced', 'void', 'draft'\) THEN x\.status/);
+  assert.match(billing, /legacyReceivables/);
   assert.match(page, /getDashboardReceivableBalance/);
   assert.match(client, /initialReceivableBalance/);
   assert.match(client, /\/api\/receivables\?summary=1/);

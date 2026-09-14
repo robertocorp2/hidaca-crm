@@ -13,7 +13,7 @@ export async function GET(_request: Request, context: RouteContext) {
   const [user] = await getDb().select().from(staffUsers).where(eq(staffUsers.id, Number(id))).limit(1);
   if (!user) return Response.json({ error: "Usuario no encontrado." }, { status: 404 });
   const resolved = await permissionsForStaffUser(user);
-  return Response.json({ user, ...permissionCatalog(), ...resolved });
+  return Response.json({ user, ...(await permissionCatalog()), ...resolved });
 }
 
 export async function PUT(request: Request, context: RouteContext) {

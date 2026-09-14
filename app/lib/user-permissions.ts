@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../../db";
-import { staffUsers } from "../../db/schema";
+import { rolePermissions, staffUsers } from "../../db/schema";
 import {
   isPermissionModuleKey,
   permissionActions,
@@ -37,11 +37,28 @@ export function validateOverrides(value: unknown): PermissionOverride[] | null {
   return parsed;
 }
 
-export function permissionCatalog() {
+const permissionRoles: StaffRole[] = ["admin", "operator", "viewer"];
+
+function builtInDefaults(role: StaffRole) {
+  return Object.entries(rolePermissionDefaults[role]).flatMap(([module, actions]) =>
+    Object.entries(actions).map(([action, allowed]) => ({ module, action, allowed })),
+  );
+}
+
+export async function permissionCatalog() {
+  const persisted = await getDb().select().from(rolePermissions);
+  const persistedRoleDefaults = Object.fromEntries(permissionRoles.map((role) => [
+    role,
+    persisted.filter((item) => item.role === role).map(({ module, action, allowed }) => ({ module, action, allowed })),
+  ]));
   return {
     modules: permissionModules,
     actions: permissionActions,
     roleDefaults: rolePermissionDefaults,
+    persistedRoleDefaults: Object.fromEntries(permissionRoles.map((role) => [
+      role,
+      persistedRoleDefaults[role].length ? persistedRoleDefaults[role] : builtInDefaults(role),
+    ])),
   };
 }
 

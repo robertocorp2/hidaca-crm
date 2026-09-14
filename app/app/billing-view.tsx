@@ -111,6 +111,8 @@ export function BillingView({
               ? "legacyInvoices"
               : mode === "pagos"
                 ? "legacyPayments"
+                : mode === "receivables"
+                  ? "legacyReceivables"
                 : ""
           ],
         ),
