@@ -63,15 +63,21 @@ test("persisted role denials remain denied while explicit allows can opt in", ()
 });
 
 test("permission previews use persisted role defaults from the server", async () => {
-  const [catalog, client] = await Promise.all([
+  const [catalog, client, authorization, userRoute, permissionsRoute] = await Promise.all([
     readFile("app/lib/user-permissions.ts", "utf8"),
     readFile("app/app/users-admin-view.tsx", "utf8"),
+    readFile("app/lib/authorization.ts", "utf8"),
+    readFile("app/api/users/[id]/route.ts", "utf8"),
+    readFile("app/api/users/[id]/permissions/route.ts", "utf8"),
   ]);
   assert.match(catalog, /rolePermissions/);
   assert.match(catalog, /persistedRoleDefaults/);
   assert.match(client, /\/api\/users\/permissions/);
   assert.match(client, /persistedRoleDefaults/);
   assert.match(client, /editor\.roleDefaults\[role\]/);
+  assert.match(authorization, /persistedDefaultsForRole/);
+  assert.match(userRoute, /persistedDefaultsForRole\(role\)/);
+  assert.match(permissionsRoute, /persistedDefaultsForRole\(target\.role\)/);
 });
 
 test("catalog contains every requested module and shared view pairs", () => {

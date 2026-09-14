@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { BusinessRow } from "./types";
 import { Empty, Modal, money } from "./ui";
 
@@ -89,8 +89,10 @@ export function BillingView({
   const [selected, setSelected] = useState<DataRow | null>(null);
   const [detail, setDetail] = useState<DataRow | null>(null);
   const [busy, setBusy] = useState(false);
+  const loadSequence = useRef(0);
 
   const load = useCallback(async () => {
+    const requestId = ++loadSequence.current;
     setLoading(true);
     const params = new URLSearchParams();
     if (query) params.set("q", query);
@@ -99,9 +101,11 @@ export function BillingView({
       cache: "no-store",
     });
     const payload = (await response.json()) as Record<string, unknown>;
+    if (requestId !== loadSequence.current) return;
     if (!response.ok) {
       setMessage(text(payload.error) || "No se pudo cargar la información.");
       setRows([]);
+      setLegacyRows([]);
     } else {
       setRows(array(payload[config.listKey]));
       setLegacyRows(
@@ -125,6 +129,7 @@ export function BillingView({
           string,
           unknown
         >;
+        if (requestId !== loadSequence.current) return;
         setInvoiceOptions(array(invoicePayload.invoices));
       }
     }

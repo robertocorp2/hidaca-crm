@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getD1, getDb } from "../../../../db";
 import { staffUsers } from "../../../../db/schema";
-import { authorizeApi, can, permissionsForStaffUser, resolvePermissionMatrix } from "../../../lib/authorization";
+import { authorizeApi, can, persistedDefaultsForRole, permissionsForStaffUser, resolvePermissionMatrix } from "../../../lib/authorization";
 import { activeEffectiveAdministrators, staffRoles, validateOverrides } from "../../../lib/user-permissions";
 import type { StaffRole } from "../../../lib/modules";
 
@@ -39,7 +39,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
   const removesAdmin = target.active && target.role === "admin" && (!active || role !== "admin");
   const removesAdministration = target.active && target.role === "admin" && hasOverrides &&
-    !resolvePermissionMatrix(role, [], overrides!).usuarios.administer;
+    !resolvePermissionMatrix(role, await persistedDefaultsForRole(role), overrides!).usuarios.administer;
   if ((removesAdmin || removesAdministration) && (await activeEffectiveAdministrators(numericId)).length === 0) {
     return Response.json({ error: "Debe permanecer al menos un administrador activo con capacidad de administrar Usuarios." }, { status: 400 });
   }

@@ -29,6 +29,10 @@ export function resolvePermissionMatrix(
   return resolveEffectivePermissions(role, defaults, overrides);
 }
 
+export async function persistedDefaultsForRole(role: StaffRole) {
+  return getDb().select().from(rolePermissions).where(eq(rolePermissions.role, role));
+}
+
 export async function permissionsForStaffUser(user: { id: number; role: StaffRole }) {
   const db = getDb();
   const [defaults, rawOverrides] = await Promise.all([

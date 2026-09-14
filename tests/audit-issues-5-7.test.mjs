@@ -35,6 +35,7 @@ test("dashboard receivables use normalized balances and expose a summary endpoin
   assert.match(financials, /payment_allocations/);
   assert.match(financials, /credit_note_applications/);
   assert.match(financials, /archived_at IS NULL/);
+  assert.match(financials, /LOWER\(TRIM\(COALESCE\(br\.status, ''\)\)\) IN \('cancelado', 'cancelled', 'reemplazado', 'replaced'/);
   assert.match(route, /summary.*===.*1/);
   assert.match(route, /totalBalance/);
   assert.match(route, /normalized_invoice_read_model/);
@@ -45,6 +46,8 @@ test("dashboard receivables use normalized balances and expose a summary endpoin
   assert.match(page, /getDashboardReceivableBalance/);
   assert.match(client, /initialReceivableBalance/);
   assert.match(client, /\/api\/receivables\?summary=1/);
+  assert.match(billing, /setLegacyRows\(\[\]\)/);
+  assert.match(billing, /loadSequence/);
 });
 
 test("dashboard receivables preserve imported snapshots without allocations", async () => {

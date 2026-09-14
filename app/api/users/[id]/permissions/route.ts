@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getD1, getDb } from "../../../../../db";
 import { staffUsers } from "../../../../../db/schema";
-import { authorizeApi, permissionsForStaffUser, resolvePermissionMatrix } from "../../../../lib/authorization";
+import { authorizeApi, persistedDefaultsForRole, permissionsForStaffUser, resolvePermissionMatrix } from "../../../../lib/authorization";
 import { activeEffectiveAdministrators, permissionCatalog, validateOverrides } from "../../../../lib/user-permissions";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -28,7 +28,7 @@ export async function PUT(request: Request, context: RouteContext) {
   const overrides = validateOverrides(payload.overrides);
   if (!overrides) return Response.json({ error: "Los permisos enviados no son válidos." }, { status: 400 });
   if (target.active && target.role === "admin" &&
-      !resolvePermissionMatrix(target.role, [], overrides).usuarios.administer &&
+      !resolvePermissionMatrix(target.role, await persistedDefaultsForRole(target.role), overrides).usuarios.administer &&
       (await activeEffectiveAdministrators(numericId)).length === 0) {
     return Response.json({ error: "Debe permanecer al menos un administrador activo con capacidad de administrar Usuarios." }, { status: 400 });
   }
