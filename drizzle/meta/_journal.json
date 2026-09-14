@@ -176,6 +176,13 @@
       "when": 1788000002000,
       "tag": "0024_whatsapp_webhook_retry",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1788000003000,
+      "tag": "0025_maintenance_write_barrier",
+      "breakpoints": true
     }
   ]
 }

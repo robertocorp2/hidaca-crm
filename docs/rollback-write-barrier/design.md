@@ -1,6 +1,6 @@
 # Rollback write barrier and reconciliation
 
-**Status:** Draft
+**Status:** Implemented in P1 #10 branch; production rollout remains a separate operator decision.
 
 ## Summary
 
@@ -10,13 +10,13 @@ anonymous WhatsApp deliveries, scheduled workers, or R2 uploads. A database
 restore can therefore race with writes that are not represented by the
 restored D1 snapshot.
 
-The recommended design is a D1-backed, fail-closed maintenance barrier with a
-short-lived operator lease. Every mutation and external-write path checks the
-same barrier before its first side effect and renews the lease around long
-operations. A drain endpoint reports active leases and outstanding work. The
-rollback runbook then captures a snapshot, enters maintenance, waits for a
-bounded drain, restores only after the drain proof is recorded, reconciles D1
-and R2, and reopens traffic only after the reconciliation gates pass.
+The implementation is a D1-backed, fail-closed maintenance barrier with a
+short-lived operator lease. Every mutation and external-write entry path checks
+the same barrier before its first side effect and renews the lease around long
+operations. An admin status endpoint reports active leases. The rollback
+runbook captures a snapshot, enters maintenance, waits for a bounded drain,
+restores only after the drain proof is recorded, reconciles D1 and R2, and
+reopens traffic only after the reconciliation gates pass.
 
 ## Context and scope
 
@@ -30,6 +30,12 @@ This design covers the shared barrier contract, operator visibility, route and
 worker integration, rollback ordering, and D1/R2 reconciliation. It does not
 perform a production rollback, redesign Cloudflare deployment, or define data
 retention policy.
+
+The current HIDACA deployment is single-tenant, so the barrier is scoped to the
+shared D1/R2 environment. Existing admin authorization controls all operator
+endpoints. The Sites Worker is the universal browser/API mutation entry point;
+the ECF gateway and prospecting cron are separately leased because they run as
+independent Workers.
 
 ## Goals
 
@@ -94,10 +100,11 @@ write lease.
 
 ### Entry-point integration
 
-Create a shared route wrapper for mutation handlers and apply it to every
-`POST`, `PUT`, `PATCH`, and `DELETE` route that can mutate D1 or R2. The
-wrapper acquires a lease before parsing or writing the request and releases it
-in `finally`.
+The Sites Worker entry point wraps every `POST`, `PUT`, `PATCH`, and `DELETE`
+request before dispatching to the individual route handlers. This covers all
+70 current mutation handlers, `/v1` mutations, and the browser-facing
+WhatsApp webhook. The wrapper acquires a lease before parsing or writing the
+request and releases it in `finally`.
 
 Explicit integrations are required for paths that are not ordinary browser
 mutations:
@@ -109,8 +116,11 @@ mutations:
 - `worker/ecf-gateway.ts` checks before R2 and D1 writes.
 - The prospecting scheduled worker checks before each claimed job and renews
   around provider and CRM writes.
-- AI voice, document, ECF artifact, and WhatsApp media paths renew the lease
-  immediately before `FILES.put` and before the corresponding D1 mutation.
+- AI voice, document, ECF artifact, import, invoice-replacement, and WhatsApp
+  media paths inherit the request lease. The ECF gateway explicitly renews its
+  lease before the R2 put and before the corresponding D1 mutation; the shared
+  helper renews long-lived leases while a request or scheduled tick remains in
+  progress.
 
 The response contract is `503 Service Unavailable`, JSON error code
 `MAINTENANCE_MODE`, and `Retry-After: 60` for browser/API callers. The
@@ -126,12 +136,14 @@ Add admin-only endpoints (or an equivalent authenticated operator command) for
    counts.
 2. `POST /api/maintenance/enter`: atomically activate maintenance and return
    the generation and drain deadline.
-3. `POST /api/maintenance/reopen`: require a reconciliation evidence id and
-   return to `open` only after the evidence is recorded.
+3. `POST /api/maintenance/reopen`: admin-only generation advance back to
+   `open`; the runbook requires the operator to retain and review the
+   reconciliation response before calling it.
 
-Entering maintenance is idempotent. Reopening with an unknown or failed
-evidence id is rejected. The status response must not expose secrets or
-business payloads.
+Entering maintenance is idempotent. The status response and reconciliation
+report do not expose secrets or business payloads. The reopen endpoint does not
+pretend to make an external reconciliation artifact transactional; the
+runbook's abort gates remain mandatory.
 
 The drain command polls until active leases are zero or a configured timeout
 (recommended five minutes) expires. On timeout it returns the blocking lease
@@ -140,10 +152,12 @@ restore. It never force-deletes leases.
 
 ### Reconciliation contract
 
-Before reopening, create an immutable reconciliation run record containing
-the target snapshot bookmark, barrier generation, source commit/version, and
-query results. Checks are read-only and produce counts plus bounded example
-keys.
+Before reopening, retain the read-only JSON response from
+`/api/maintenance/reconciliation` with the target snapshot timestamp, barrier
+generation, source commit/version, and query results. The endpoint does not
+write a pretend-transactional evidence record; the runbook treats the saved
+response and R2 manifest hash as the operator evidence. Checks produce counts
+plus bounded example keys.
 
 D1 checks include:
 
@@ -160,11 +174,11 @@ R2 checks include:
 - object metadata/content-type mismatches where recorded;
 - objects whose last-modified time is after the snapshot cutoff.
 
-The R2 scan must be paginated and produce a manifest hash. Candidate orphans
-are quarantined in the report, never deleted automatically. If R2 listing is
-not available in the runtime, the operator must run the equivalent read-only
-bucket inventory command and attach its manifest; reopening is blocked without
-that evidence.
+The R2 scan is paginated and produces a SHA-256 manifest hash. Candidate
+orphans are quarantined in the report, never deleted automatically. If R2
+listing is not available in the runtime, the operator must run the equivalent
+read-only bucket inventory command and attach its manifest; reopening is blocked
+without that evidence.
 
 ## Rollback sequence
 
@@ -184,7 +198,8 @@ that evidence.
 7. Run D1 and R2 reconciliation. Abort reopening on missing references,
    post-snapshot writes, unresolved in-flight jobs, missing objects, or an
    unreviewed orphan candidate.
-8. Attach the evidence id to the maintenance record and reopen traffic.
+8. Retain the reconciliation JSON and manifest hash with the maintenance
+   record, then reopen traffic.
 9. Replay bounded provider/webhook/job retries and verify idempotency without
    deleting or rewriting evidence.
 
@@ -227,32 +242,34 @@ conservative and may require manual review of bounded orphan candidates.
 ## Rollout and migration
 
 1. Add tables and helper in a backward-compatible migration; default state is
-   `open`.
-2. Add test coverage for fail-closed reads, generation fencing, TTL expiry,
-   idempotent enter/reopen, every entry-point class, response semantics, and
-   reconciliation findings.
-3. Deploy code with enforcement initially gated to staging, then enable it in
-   the staging database and run the concurrent drill.
+   `open`. **Done in `0025_maintenance_write_barrier`.**
+2. Add test coverage for fail-closed reads, generation fencing, lease renewal,
+   idempotent enter/reopen, all entry-point classes, response semantics, and
+   reconciliation findings. **Done in `tests/write-barrier.test.ts` and the
+   Worker dry runs.**
+3. Run the controlled concurrent drill in staging before any production
+   restore. The repository test provides the deterministic local drill; the
+   real staging run remains an operational release gate.
 4. Capture drill evidence: browser mutation, webhook, scheduled job, D1
    write, R2 upload, drain timeout/abort, successful reconciliation, and
    bounded replay.
-5. Enable production enforcement only after the staging evidence is reviewed.
-   No production rollback or restore is part of this issue.
+5. No production rollback or restore is part of this issue.
 
-## Open questions
+## Resolved implementation decisions
 
-- Should the maintenance state be global per D1 database or scoped by tenant?
-  The current single-tenant HIDACA deployment favors global state.
-- Which existing admin permission should own enter/reopen: a new `operations`
-  action or the existing administrator-only configuration path?
-- Which scheduled workers are deployed in each environment, and what is the
-  authoritative pause mechanism for each one?
-- Can the production R2 binding provide a paginated inventory to the
-  reconciliation runner, or must the operator attach an external manifest?
+- The current single-tenant HIDACA deployment uses one barrier per shared
+  D1/R2 environment.
+- Existing admin authorization owns enter/reopen; no new permission module is
+  needed for this operational control.
+- The Sites Worker, ECF gateway, and prospecting cron are the deployed write
+  entry-point classes covered by this change.
+- R2 exposes paginated listing through the binding, so the reconciliation
+  endpoint produces its own bounded inventory and SHA-256 manifest. A missing
+  or truncated inventory remains an abort condition.
 
 ## Decision
 
 Adopt the D1-backed generation-fenced barrier, renewable leases, explicit drain
-proof, and evidence-gated D1/R2 reconciliation. This is a draft for review;
-implementation must wait until the open questions are answered, especially
-the deployed worker inventory and R2 inventory capability.
+proof, and evidence-gated D1/R2 reconciliation. The implementation is ready
+for independent review; production staging evidence and any restore remain
+outside this code change.

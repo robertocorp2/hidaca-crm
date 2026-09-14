@@ -2,6 +2,7 @@ import { GooglePlaces, HunterAdapter, ProviderAdapter } from "../app/lib/prospec
 import { ProspectingError } from "../app/lib/prospecting/contracts";
 import { Repository } from "../app/lib/prospecting/repository";
 import { WorkerRuntime } from "../app/lib/prospecting/runtime";
+import { MaintenanceModeError, withWriteLease } from "../app/lib/write-barrier";
 
 export default {
   async scheduled(_controller, env, ctx) {
@@ -17,6 +18,16 @@ export default {
     });
     // The core CRM supports one tenant. A future multi-tenant deployment needs
     // an explicitly scoped CRM adapter before adding another tenant here.
-    ctx.waitUntil(runtime.tick("hidaca"));
+    ctx.waitUntil((async () => {
+      try {
+        await withWriteLease(env.DB, "prospecting-scheduled", () => runtime.tick("hidaca"));
+      } catch (error) {
+        if (error instanceof MaintenanceModeError) {
+          console.info("[prospecting] maintenance mode is active; scheduled writes were skipped");
+          return;
+        }
+        throw error;
+      }
+    })());
   },
 } satisfies ExportedHandler<ProspectingWorkerEnv>;
