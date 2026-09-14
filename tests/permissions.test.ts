@@ -80,6 +80,9 @@ test("permission previews use persisted role defaults from the server", async ()
   assert.match(permissionsRoute, /persistedDefaultsForRole\(target\.role\)/);
   assert.match(userRoute, /activeCapableAdministratorSql/);
   assert.match(permissionsRoute, /activeCapableAdministratorSql/);
+  assert.match(catalog, /activeCapableAdministratorSql/);
+  assert.match(catalog, /uo\.action = 'view'/);
+  assert.match(catalog, /uo\.action = 'administer'/);
   assert.match(userRoute, /guardToken/);
   assert.match(permissionsRoute, /guardToken/);
   const userEditor = await readFile("app/app/users-admin-view.tsx", "utf8");
