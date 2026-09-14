@@ -7,6 +7,7 @@ import { persistInboundWhatsAppMessage, renewWhatsAppWebhookClaim, resolveWhatsA
 import { downloadMetaMedia, verifyWhatsAppSignature } from "../../../lib/whatsapp";
 import { canonicalWhatsAppMessageIdentity, canonicalWhatsAppWebhookIdentity } from "../../../lib/whatsapp-webhook-identity";
 import { env } from "cloudflare:workers";
+import { assertRequestWriteLease, MaintenanceModeError, maintenanceResponse } from "../../../lib/write-barrier";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -27,6 +28,12 @@ export async function POST(request: Request) {
   const legacyEventHash = await hashBody(rawBody);
   const canonicalEventHash = await hashBody(eventIdentity ?? rawBody);
   const d1 = getD1();
+  try {
+    await assertRequestWriteLease(d1, request);
+  } catch (error) {
+    if (error instanceof MaintenanceModeError) return maintenanceResponse(error);
+    throw error;
+  }
   const eventHash = await resolveWhatsAppWebhookEventHash(d1, canonicalEventHash, legacyEventHash);
   const legacyReplay = eventHash === legacyEventHash && legacyEventHash !== canonicalEventHash;
   const now = new Date().toISOString();

@@ -3,6 +3,14 @@
  * CRM Worker. Deploy it only with dedicated DGII bindings and secrets.
  * This gateway never exposes the HIDACA application or its UI.
  */
+import {
+  assertWriteLeaseActive,
+  MaintenanceModeError,
+  maintenanceResponse,
+  withWriteLease,
+  type WriteLease,
+} from "../app/lib/write-barrier";
+
 interface GatewayEnv {
   DB: D1Database;
   FILES: R2Bucket;
@@ -16,15 +24,24 @@ const gateway = {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname.endsWith("/fe/autenticacion/api/semilla")) return seed();
     if (request.method === "POST" && url.pathname.endsWith("/fe/autenticacion/api/validacioncertificado")) return certificateValidation(request);
-    if (request.method === "POST" && url.pathname.endsWith("/fe/recepcion/api/ecf")) return receive(request, env, "ecf");
-    if (request.method === "POST" && url.pathname.endsWith("/fe/aprobacioncomercial/api/ecf")) return receive(request, env, "approval");
+    if (request.method === "POST" && url.pathname.endsWith("/fe/recepcion/api/ecf")) return receiveWithBarrier(request, env, "ecf");
+    if (request.method === "POST" && url.pathname.endsWith("/fe/aprobacioncomercial/api/ecf")) return receiveWithBarrier(request, env, "approval");
     return json({ error: "Fiscal endpoint not found." }, 404);
   },
 };
 
 export default gateway;
 
-async function receive(request: Request, env: GatewayEnv, operation: string) {
+async function receiveWithBarrier(request: Request, env: GatewayEnv, operation: string) {
+  try {
+    return await withWriteLease(env.DB, "ecf-gateway", (lease) => receive(request, env, operation, lease));
+  } catch (error) {
+    if (error instanceof MaintenanceModeError) return maintenanceResponse(error);
+    throw error;
+  }
+}
+
+async function receive(request: Request, env: GatewayEnv, operation: string, lease: WriteLease) {
   const body = await readXml(request);
   if (!body) return json({ error: "XML payload is required." }, 400);
   if (body.length > 5_000_000 || /<!DOCTYPE|<!ENTITY/i.test(body)) return json({ error: "XML payload rejected." }, 413);
@@ -33,7 +50,9 @@ async function receive(request: Request, env: GatewayEnv, operation: string) {
   const issuerRnc = tag(body, "RNCEmisor");
   const id = crypto.randomUUID();
   const key = `ecf-gateway/inbound/${new Date().toISOString().slice(0, 10)}/${id}.xml`;
+  await assertWriteLeaseActive(env.DB, lease);
   await env.FILES.put(key, new TextEncoder().encode(body), { httpMetadata: { contentType: "application/xml" } });
+  await assertWriteLeaseActive(env.DB, lease);
   await env.DB.prepare("INSERT INTO ecf_inbound_messages (id, environment, operation, issuer_rnc, encf, outcome, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(id, "test", operation, issuerRnc, encf, "received_pending_validation", new Date().toISOString()).run();
   if (operation === "approval") return xml(`<ACECF><DetalleAprobacionComercial><eNCF>${escapeXml(encf)}</eNCF><Estado>0</Estado></DetalleAprobacionComercial></ACECF>`);
   return xml(`<ARECF><DetalleAcusederecibo><Version>1.0</Version><RNCEmisor>${escapeXml(issuerRnc)}</RNCEmisor><eNCF>${escapeXml(encf)}</eNCF><Estado>0</Estado><FechaHoraAcuseRecibo>${new Date().toISOString()}</FechaHoraAcuseRecibo></DetalleAcusederecibo></ARECF>`);
