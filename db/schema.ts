@@ -2554,10 +2554,14 @@ export const whatsappWebhookEvents = sqliteTable("whatsapp_webhook_events", {
   eventHash: text("event_hash").notNull(),
   eventType: text("event_type").notNull(),
   metaMessageId: text("meta_message_id"),
-  processingStatus: text("processing_status", { enum: ["processed", "ignored", "failed"] }).notNull(),
+  processingStatus: text("processing_status", { enum: ["received", "processing", "processed", "ignored", "failed"] }).notNull(),
   error: text("error"),
   receivedAt: text("received_at").notNull(),
   processedAt: text("processed_at"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  lastAttemptAt: text("last_attempt_at"),
+  processingStartedAt: text("processing_started_at"),
+  leaseUntil: text("lease_until"),
 }, (table) => [uniqueIndex("whatsapp_webhook_events_hash_unique").on(table.eventHash), index("whatsapp_webhook_events_received_idx").on(table.receivedAt)]);
 
 export const whatsappCampaigns = sqliteTable("whatsapp_campaigns", {

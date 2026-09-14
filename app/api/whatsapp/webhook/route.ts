@@ -2,6 +2,7 @@ import { and, eq, isNull, or } from "drizzle-orm";
 import { getD1, getDb } from "../../../../db";
 import { contacts, leads, opportunities, whatsappConversations, whatsappMessages } from "../../../../db/schema";
 import { normalizePhone } from "../../../lib/crm";
+import { persistInboundWhatsAppMessage, runWhatsAppWebhookDelivery } from "../../../lib/whatsapp-webhook";
 import { downloadMetaMedia, nextWhatsAppStatus, verifyWhatsAppSignature } from "../../../lib/whatsapp";
 import { env } from "cloudflare:workers";
 
@@ -24,35 +25,51 @@ export async function POST(request: Request) {
   const d1 = getD1();
   const now = new Date().toISOString();
   try {
-    await d1.prepare("INSERT INTO whatsapp_webhook_events (event_hash,event_type,processing_status,received_at) VALUES (?, ?, 'processed', ?)").bind(eventHash, "batch", now).run();
-  } catch { return Response.json({ ok: true, duplicate: true }); }
-  try {
-    for (const entry of payload.entry ?? []) for (const change of entry.changes ?? []) {
-      const value = change.value ?? {};
-      const metadata = value.metadata as { phone_number_id?: string } | undefined;
-      const phoneNumberId = metadata?.phone_number_id ?? env.WHATSAPP_PHONE_NUMBER_ID ?? "";
-      for (const message of (value.messages as Array<Record<string, unknown>> | undefined) ?? []) {
-        const from = String(message.from ?? "");
-        if (!from) continue;
-        const profile = ((value.contacts as Array<{ wa_id?: string; profile?: { name?: string } }> | undefined) ?? []).find((contact) => contact.wa_id === from);
-        const conversationId = await upsertConversation(phoneNumberId, from, profile?.profile?.name ?? from, now);
-        const type = String(message.type ?? "unsupported");
-        const content = message[type] as { body?: string; caption?: string; id?: string } | undefined;
-        const mediaId = content?.id ?? null;
-        let mediaKey: string | null = null;
-        let contentType: string | null = null;
-        if (mediaId && ["image", "document", "audio", "video"].includes(type) && env.FILES) {
-          try { const media = await downloadMetaMedia(mediaId); mediaKey = `whatsapp/${conversationId}/${crypto.randomUUID()}`; contentType = media.contentType; await env.FILES.put(mediaKey, media.body, { httpMetadata: { contentType } }); } catch { /* retain Meta media id for a safe retry/placeholder */ }
+    const delivery = await runWhatsAppWebhookDelivery(d1, { eventHash, eventType: "batch", now }, async () => {
+      let messageOrdinal = 0;
+      for (const entry of payload.entry ?? []) for (const change of entry.changes ?? []) {
+        const value = change.value ?? {};
+        const metadata = value.metadata as { phone_number_id?: string } | undefined;
+        const phoneNumberId = metadata?.phone_number_id ?? env.WHATSAPP_PHONE_NUMBER_ID ?? "";
+        for (const message of (value.messages as Array<Record<string, unknown>> | undefined) ?? []) {
+          const from = String(message.from ?? "");
+          if (!from) continue;
+          const profile = ((value.contacts as Array<{ wa_id?: string; profile?: { name?: string } }> | undefined) ?? []).find((contact) => contact.wa_id === from);
+          const conversationId = await upsertConversation(phoneNumberId, from, profile?.profile?.name ?? from, now);
+          const type = String(message.type ?? "unsupported");
+          const content = message[type] as { body?: string; caption?: string; id?: string } | undefined;
+          const mediaId = content?.id ?? null;
+          let mediaKey: string | null = null;
+          let contentType: string | null = null;
+          const ordinal = messageOrdinal++;
+          if (mediaId && ["image", "document", "audio", "video"].includes(type)) {
+            if (!env.FILES) throw new Error("WHATSAPP_MEDIA_STORAGE_UNAVAILABLE");
+            const media = await downloadMetaMedia(mediaId);
+            const mediaPart = String(message.id ?? ordinal).replace(/[^a-zA-Z0-9_.-]/g, "_");
+            mediaKey = `whatsapp/${conversationId}/${eventHash}-${mediaPart}`;
+            contentType = media.contentType;
+            await env.FILES.put(mediaKey, media.body, { httpMetadata: { contentType } });
+          }
+          await persistInboundWhatsAppMessage(d1, {
+            id: crypto.randomUUID(),
+            conversationId,
+            metaMessageId: message.id ? String(message.id) : null,
+            type: ["text", "image", "document", "audio", "video", "sticker", "location"].includes(type) ? type : "unsupported",
+            body: content?.body ?? "",
+            caption: content?.caption ?? "",
+            mediaId,
+            mediaKey,
+            contentType,
+            now,
+          });
         }
-        await d1.prepare("INSERT OR IGNORE INTO whatsapp_messages (id,conversation_id,meta_message_id,direction,type,body,caption,status,media_id,media_key,content_type,created_at) VALUES (?, ?, ?, 'inbound', ?, ?, ?, 'received', ?, ?, ?, ?)").bind(crypto.randomUUID(), conversationId, String(message.id ?? ""), ["text", "image", "document", "audio", "video", "sticker", "location"].includes(type) ? type : "unsupported", content?.body ?? "", content?.caption ?? "", mediaId, mediaKey, contentType, now).run();
-        await d1.prepare("UPDATE whatsapp_conversations SET unread_count=unread_count+1,last_inbound_at=?,last_message_at=?,service_window_expires_at=?,updated_at=? WHERE id=?").bind(now, now, new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), now, conversationId).run();
+        for (const status of (value.statuses as Array<Record<string, unknown>> | undefined) ?? []) await applyStatus(String(status.id ?? ""), String(status.status ?? ""), status.errors, now);
       }
-      for (const status of (value.statuses as Array<Record<string, unknown>> | undefined) ?? []) await applyStatus(String(status.id ?? ""), String(status.status ?? ""), status.errors, now);
-    }
-    await d1.prepare("UPDATE whatsapp_webhook_events SET processed_at=? WHERE event_hash=?").bind(now, eventHash).run();
+    });
+    if (delivery.status === "duplicate") return Response.json({ ok: true, duplicate: true });
+    if (delivery.status === "in_flight") return Response.json({ ok: false, retryable: true }, { status: 500, headers: { "Retry-After": "5" } });
     return Response.json({ ok: true });
-  } catch (error) {
-    await d1.prepare("UPDATE whatsapp_webhook_events SET processing_status='failed',error=?,processed_at=? WHERE event_hash=?").bind(error instanceof Error ? error.message.slice(0, 500) : "Error", now, eventHash).run();
+  } catch {
     return Response.json({ error: "Webhook processing failed" }, { status: 500 });
   }
 }
