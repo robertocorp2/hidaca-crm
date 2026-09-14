@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { activeCapableAdministratorSql } from "../app/lib/admin-capability-sql.js";
 import {
   permissionModules,
   resolveEffectivePermissions,
@@ -63,12 +65,13 @@ test("persisted role denials remain denied while explicit allows can opt in", ()
 });
 
 test("permission previews use persisted role defaults from the server", async () => {
-  const [catalog, client, authorization, userRoute, permissionsRoute] = await Promise.all([
+  const [catalog, client, authorization, userRoute, permissionsRoute, capabilitySql] = await Promise.all([
     readFile("app/lib/user-permissions.ts", "utf8"),
     readFile("app/app/users-admin-view.tsx", "utf8"),
     readFile("app/lib/authorization.ts", "utf8"),
     readFile("app/api/users/[id]/route.ts", "utf8"),
     readFile("app/api/users/[id]/permissions/route.ts", "utf8"),
+    readFile("app/lib/admin-capability-sql.ts", "utf8"),
   ]);
   assert.match(catalog, /rolePermissions/);
   assert.match(catalog, /persistedRoleDefaults/);
@@ -81,8 +84,8 @@ test("permission previews use persisted role defaults from the server", async ()
   assert.match(userRoute, /activeCapableAdministratorSql/);
   assert.match(permissionsRoute, /activeCapableAdministratorSql/);
   assert.match(catalog, /activeCapableAdministratorSql/);
-  assert.match(catalog, /uo\.action = 'view'/);
-  assert.match(catalog, /uo\.action = 'administer'/);
+  assert.match(capabilitySql, /uo\.action = 'view'/);
+  assert.match(capabilitySql, /uo\.action = 'administer'/);
   assert.match(userRoute, /guardToken/);
   assert.match(permissionsRoute, /guardToken/);
   const userEditor = await readFile("app/app/users-admin-view.tsx", "utf8");
@@ -97,6 +100,46 @@ test("admin-only navigation follows each item's permission module", async () => 
   assert.match(client, /if \(item\.adminOnly && currentUser\.role !== "admin"\) return false/);
   assert.doesNotMatch(client, /item\.adminOnly && !canManageUsers/);
   assert.match(client, /currentUser\.permissions\[permissionModule\]\.view/);
+});
+
+test("last-admin guard uses effective view and administer permissions at mutation time", () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec(`
+    CREATE TABLE staff_users (id INTEGER PRIMARY KEY, role TEXT NOT NULL, active INTEGER NOT NULL);
+    CREATE TABLE role_permissions (role TEXT NOT NULL, module TEXT NOT NULL, action TEXT NOT NULL, allowed INTEGER NOT NULL);
+    CREATE TABLE user_permission_overrides (user_id INTEGER NOT NULL, module TEXT NOT NULL, action TEXT NOT NULL, effect TEXT NOT NULL);
+    INSERT INTO staff_users VALUES (1, 'admin', 1), (2, 'admin', 1);
+    INSERT INTO role_permissions VALUES
+      ('admin', 'usuarios', 'view', 1),
+      ('admin', 'usuarios', 'administer', 1);
+  `);
+
+  const capability = () => Number(database.prepare(
+    `SELECT CASE WHEN ${activeCapableAdministratorSql()} THEN 1 ELSE 0 END AS capable`,
+  ).get(1)?.capable ?? 0);
+  const guardedDemotion = database.prepare(
+    `UPDATE staff_users
+     SET active = 0
+     WHERE id = ? AND active = 1 AND ${activeCapableAdministratorSql()}`,
+  );
+
+  database.prepare(
+    "INSERT INTO user_permission_overrides (user_id, module, action, effect) VALUES (2, 'usuarios', 'view', 'deny')",
+  ).run();
+  assert.equal(capability(), 0, "a denied usuarios.view admin is not a capable fallback");
+  assert.equal(guardedDemotion.run(1, 1).changes, 0, "the guarded mutation must block removal of the last capable admin");
+  database.prepare("DELETE FROM user_permission_overrides WHERE user_id = 2").run();
+
+  database.prepare(
+    "INSERT INTO user_permission_overrides (user_id, module, action, effect) VALUES (2, 'usuarios', 'administer', 'deny')",
+  ).run();
+  assert.equal(capability(), 0, "a denied usuarios.administer admin is not a capable fallback");
+  assert.equal(guardedDemotion.run(1, 1).changes, 0, "the guard must require administer as well as view");
+  database.prepare("DELETE FROM user_permission_overrides WHERE user_id = 2").run();
+
+  assert.equal(capability(), 1);
+  assert.equal(guardedDemotion.run(1, 1).changes, 1, "an effective capable fallback permits the mutation");
+  database.close();
 });
 
 test("catalog contains every requested module and shared view pairs", () => {
