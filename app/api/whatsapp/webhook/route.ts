@@ -5,6 +5,7 @@ import { contacts, leads, opportunities, whatsappConversations } from "../../../
 import { normalizePhone } from "../../../lib/crm";
 import { persistInboundWhatsAppMessage, renewWhatsAppWebhookClaim, runWhatsAppWebhookDelivery, updateWhatsAppDeliveryStatus, webhookClaimIsActive, type WhatsAppWebhookClaim, whatsappWebhookResponse } from "../../../lib/whatsapp-webhook";
 import { downloadMetaMedia, verifyWhatsAppSignature } from "../../../lib/whatsapp";
+import { canonicalWhatsAppWebhookIdentity } from "../../../lib/whatsapp-webhook-identity";
 import { env } from "cloudflare:workers";
 
 export async function GET(request: Request) {
@@ -22,7 +23,8 @@ export async function POST(request: Request) {
   const rawBody = await request.text();
   if (!(await verifyWhatsAppSignature(rawBody, request.headers.get("x-hub-signature-256")))) return new Response("Invalid signature", { status: 401 });
   const payload = JSON.parse(rawBody) as { entry?: Array<{ changes?: Array<{ value?: Record<string, unknown> }> }> };
-  const eventHash = await hashBody(rawBody);
+  const eventIdentity = canonicalWhatsAppWebhookIdentity(payload);
+  const eventHash = await hashBody(eventIdentity ?? rawBody);
   const d1 = getD1();
   const now = new Date().toISOString();
   try {
@@ -47,8 +49,8 @@ export async function POST(request: Request) {
             if (!env.FILES) throw new Error("WHATSAPP_MEDIA_STORAGE_UNAVAILABLE");
             if (!(await renewWhatsAppWebhookClaim(d1, claim, new Date().toISOString()))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
             const media = await downloadMetaMedia(mediaId);
-            const mediaPart = String(message.id ?? ordinal).replace(/[^a-zA-Z0-9_.-]/g, "_");
-            mediaKey = `whatsapp/${conversationId}/${eventHash}-${mediaPart}`;
+            const mediaPart = String(message.id ?? `event-${eventHash}-${ordinal}`).replace(/[^a-zA-Z0-9_.-]/g, "_");
+            mediaKey = `whatsapp/${conversationId}/${mediaPart}`;
             contentType = media.contentType;
             if (!(await renewWhatsAppWebhookClaim(d1, claim, new Date().toISOString()))) throw new Error("WHATSAPP_WEBHOOK_STALE_CLAIM");
             await env.FILES.put(mediaKey, media.body, { httpMetadata: { contentType } });

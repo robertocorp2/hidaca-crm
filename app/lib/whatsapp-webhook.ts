@@ -209,14 +209,14 @@ export async function refreshWhatsAppCampaignSummary(d1: D1Database, campaignId:
   await d1
     .prepare(
       `UPDATE whatsapp_campaigns AS c
-       SET status=CASE WHEN EXISTS (
+       SET status=CASE WHEN c.status='paused' THEN 'paused' WHEN EXISTS (
              SELECT 1 FROM whatsapp_campaign_recipients AS r
              WHERE r.campaign_id=c.id AND (r.status IN ('queued','sending','uncertain') OR (r.status='failed' AND r.meta_message_id IS NULL))
            ) THEN 'running' ELSE 'completed' END,
            processed=(SELECT COUNT(*) FROM whatsapp_campaign_recipients AS r WHERE r.campaign_id=c.id AND NOT (r.status IN ('queued','sending','uncertain') OR (r.status='failed' AND r.meta_message_id IS NULL))),
            sent=(SELECT COUNT(*) FROM whatsapp_campaign_recipients AS r WHERE r.campaign_id=c.id AND r.status IN ('sent','delivered','read')),
            failed=(SELECT COUNT(*) FROM whatsapp_campaign_recipients AS r WHERE r.campaign_id=c.id AND r.status='failed'),
-           finished_at=CASE WHEN EXISTS (
+           finished_at=CASE WHEN c.status='paused' THEN c.finished_at WHEN EXISTS (
              SELECT 1 FROM whatsapp_campaign_recipients AS r
              WHERE r.campaign_id=c.id AND (r.status IN ('queued','sending','uncertain') OR (r.status='failed' AND r.meta_message_id IS NULL))
            ) THEN NULL ELSE ? END,

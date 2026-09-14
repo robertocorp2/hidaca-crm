@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import test from "node:test";
 import type { D1Database, D1PreparedStatement, D1Result } from "@cloudflare/workers-types";
-import { persistInboundWhatsAppMessage, runWhatsAppWebhookDelivery, updateWhatsAppDeliveryStatus, updateWhatsAppMessageStatus, whatsappWebhookResponse } from "../app/lib/whatsapp-webhook";
+import { persistInboundWhatsAppMessage, refreshWhatsAppCampaignSummary, runWhatsAppWebhookDelivery, updateWhatsAppDeliveryStatus, updateWhatsAppMessageStatus, whatsappWebhookResponse } from "../app/lib/whatsapp-webhook";
 
 function database() {
   const sqlite = new DatabaseSync(":memory:");
@@ -185,6 +185,15 @@ test("status webhooks update campaign recipients and acknowledge stale statuses"
   assert.deepEqual({ ...sqlite.prepare("SELECT status,meta_message_id FROM whatsapp_campaign_delivery_attempts WHERE id='attempt-4'").get() }, { status: "delivered", meta_message_id: "wamid-current" });
   assert.deepEqual({ ...sqlite.prepare("SELECT status,processed,sent,failed FROM whatsapp_campaigns WHERE id='campaign-1'").get() }, { status: "running", processed: 3, sent: 3, failed: 0 });
   assert.equal(await updateWhatsAppDeliveryStatus(d1, "wamid-unknown", "delivered", null, options.now), "missing");
+  sqlite.close();
+});
+
+test("campaign reconciliation never unpauses a campaign", async () => {
+  const { sqlite, d1 } = database();
+  sqlite.prepare("INSERT INTO whatsapp_campaigns(id,status,updated_at) VALUES(?,?,?)").run("campaign-paused", "paused", options.now);
+  sqlite.prepare("INSERT INTO whatsapp_campaign_recipients(id,campaign_id,status) VALUES(?,?,?)").run("recipient-paused", "campaign-paused", "queued");
+  await refreshWhatsAppCampaignSummary(d1, "campaign-paused", options.now);
+  assert.equal(sqlite.prepare("SELECT status FROM whatsapp_campaigns WHERE id='campaign-paused'").get()?.status, "paused");
   sqlite.close();
 });
 

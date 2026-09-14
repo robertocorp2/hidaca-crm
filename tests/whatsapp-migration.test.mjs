@@ -18,7 +18,16 @@ test("webhook migration makes legacy completion policy explicit and installs ato
     );
     CREATE TABLE whatsapp_conversations (id TEXT PRIMARY KEY, unread_count INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE whatsapp_conversation_reads (conversation_id TEXT NOT NULL, last_read_at TEXT NOT NULL);
-    CREATE TABLE whatsapp_campaign_recipients (id TEXT PRIMARY KEY);
+    CREATE TABLE whatsapp_campaign_recipients (
+      id TEXT PRIMARY KEY,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      meta_message_id TEXT,
+      status TEXT NOT NULL,
+      error TEXT,
+      locked_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE whatsapp_messages (
       id TEXT PRIMARY KEY,
       conversation_id TEXT NOT NULL,
@@ -35,6 +44,7 @@ test("webhook migration makes legacy completion policy explicit and installs ato
     );
     INSERT INTO whatsapp_webhook_events(event_hash,event_type,processing_status,received_at) VALUES('legacy-partial','batch','processed','2026-09-14T04:00:00.000Z');
     INSERT INTO whatsapp_webhook_events(event_hash,event_type,processing_status,received_at) VALUES('legacy-ignored','batch','ignored','2026-09-14T04:00:00.000Z');
+    INSERT INTO whatsapp_campaign_recipients(id,attempts,meta_message_id,status,error,locked_at,created_at,updated_at) VALUES('recipient-legacy',2,NULL,'failed',NULL,NULL,'2026-09-14T04:00:00.000Z','2026-09-14T04:00:00.000Z');
     INSERT INTO whatsapp_conversations(id,unread_count) VALUES('conversation-1',0);
     INSERT INTO whatsapp_messages(id,conversation_id,meta_message_id,direction,type,body,caption,status,created_at) VALUES('message-1','conversation-1','wamid-1','inbound','text','Hola','', 'received', '2026-09-14T04:00:00.000Z');
   `);
@@ -50,6 +60,16 @@ test("webhook migration makes legacy completion policy explicit and installs ato
     processing_status: "processed",
     processed_at: "2026-09-14T04:00:00.000Z",
     error: "Legacy ignored delivery preserved as a no-op",
+  });
+  assert.deepEqual({ ...database.prepare("SELECT delivery_token,status FROM whatsapp_campaign_recipients WHERE id='recipient-legacy'").get() }, {
+    delivery_token: "legacy:recipient-legacy:2",
+    status: "failed",
+  });
+  assert.deepEqual({ ...database.prepare("SELECT recipient_id,delivery_token,status,meta_message_id FROM whatsapp_campaign_delivery_attempts WHERE recipient_id='recipient-legacy'").get() }, {
+    recipient_id: "recipient-legacy",
+    delivery_token: "legacy:recipient-legacy:2",
+    status: "unreconciled",
+    meta_message_id: null,
   });
 
   assert.equal(database.prepare("SELECT unread_count FROM whatsapp_conversations").get()?.unread_count, 1);

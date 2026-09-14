@@ -18,6 +18,27 @@ CREATE UNIQUE INDEX `whatsapp_campaign_delivery_attempts_token_unique` ON `whats
 CREATE UNIQUE INDEX `whatsapp_campaign_delivery_attempts_meta_unique` ON `whatsapp_campaign_delivery_attempts` (`meta_message_id`);--> statement-breakpoint
 CREATE INDEX `whatsapp_campaign_delivery_attempts_recipient_idx` ON `whatsapp_campaign_delivery_attempts` (`recipient_id`);--> statement-breakpoint
 CREATE INDEX `whatsapp_webhook_events_processing_idx` ON `whatsapp_webhook_events` (`processing_status`,`lease_until`);--> statement-breakpoint
+-- Legacy recipients have no immutable provider-attempt record. Preserve one
+-- explicit unreconciled marker so they cannot be mistaken for fully audited
+-- sends during retry/reconciliation.
+UPDATE `whatsapp_campaign_recipients`
+SET delivery_token = 'legacy:' || id || ':' || CASE WHEN attempts > 0 THEN attempts ELSE 1 END,
+    status = CASE WHEN status = 'sending' THEN 'uncertain' ELSE status END,
+    error = CASE WHEN status = 'sending' THEN COALESCE(error, 'Legacy send requires Meta reconciliation') ELSE error END,
+    locked_at = CASE WHEN status = 'sending' THEN NULL ELSE locked_at END
+WHERE delivery_token IS NULL AND (attempts > 0 OR meta_message_id IS NOT NULL);--> statement-breakpoint
+INSERT INTO `whatsapp_campaign_delivery_attempts`
+  (id,recipient_id,delivery_token,meta_message_id,status,error,created_at,updated_at)
+SELECT 'legacy-attempt:' || r.id,
+       r.id,
+       r.delivery_token,
+       r.meta_message_id,
+       CASE WHEN r.meta_message_id IS NULL THEN 'unreconciled' ELSE r.status END,
+       r.error,
+       r.created_at,
+       r.updated_at
+FROM `whatsapp_campaign_recipients` AS r
+WHERE r.delivery_token IS NOT NULL AND (r.attempts > 0 OR r.meta_message_id IS NOT NULL);--> statement-breakpoint
 UPDATE `whatsapp_webhook_events`
 SET processing_status = 'failed', processed_at = NULL,
     error = COALESCE(error, 'Legacy delivery had no durable completion marker')
