@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import test from "node:test";
 import type { D1Database, D1PreparedStatement, D1Result } from "@cloudflare/workers-types";
-import { persistInboundWhatsAppMessage, refreshWhatsAppCampaignSummary, runWhatsAppWebhookDelivery, updateWhatsAppDeliveryStatus, updateWhatsAppMessageStatus, whatsappWebhookResponse } from "../app/lib/whatsapp-webhook";
+import { persistInboundWhatsAppMessage, refreshWhatsAppCampaignSummary, resolveWhatsAppWebhookEventHash, runWhatsAppWebhookDelivery, updateWhatsAppDeliveryStatus, updateWhatsAppMessageStatus, whatsappWebhookResponse } from "../app/lib/whatsapp-webhook";
 
 function database() {
   const sqlite = new DatabaseSync(":memory:");
@@ -106,6 +106,14 @@ test("successful webhook delivery is terminal and a duplicate is a no-op", async
   assert.equal(duplicate.status, "duplicate");
   assert.equal(calls, 1);
   assert.deepEqual({ ...sqlite.prepare("SELECT processing_status,attempt_count,processed_at,error FROM whatsapp_webhook_events").get() }, { processing_status: "processed", attempt_count: 1, processed_at: options.now, error: null });
+  sqlite.close();
+});
+
+test("canonical webhook deliveries reuse legacy raw-body event hashes", async () => {
+  const { sqlite, d1 } = database();
+  sqlite.prepare("INSERT INTO whatsapp_webhook_events(event_hash,event_type,processing_status,received_at) VALUES(?,?,?,?)").run("legacy-raw-hash", "batch", "failed", options.now);
+  assert.equal(await resolveWhatsAppWebhookEventHash(d1, "canonical-provider-hash", "legacy-raw-hash"), "legacy-raw-hash");
+  assert.equal(await resolveWhatsAppWebhookEventHash(d1, "canonical-provider-hash", "missing-raw-hash"), "canonical-provider-hash");
   sqlite.close();
 });
 

@@ -32,6 +32,21 @@ export type WhatsAppWebhookClaim = {
 
 export type WhatsAppStatusUpdate = "updated" | "already_applied" | "missing";
 
+export async function resolveWhatsAppWebhookEventHash(d1: D1Database, preferredHash: string, legacyHash: string) {
+  if (preferredHash === legacyHash) return preferredHash;
+  const existing = await d1
+    .prepare(
+      `SELECT event_hash
+       FROM whatsapp_webhook_events
+       WHERE event_hash IN (?, ?)
+       ORDER BY CASE event_hash WHEN ? THEN 0 ELSE 1 END
+       LIMIT 1`,
+    )
+    .bind(legacyHash, preferredHash, legacyHash)
+    .first<{ event_hash: string }>();
+  return existing?.event_hash ?? preferredHash;
+}
+
 function leaseUntil(now: string, leaseMs: number) {
   return new Date(new Date(now).getTime() + leaseMs).toISOString();
 }

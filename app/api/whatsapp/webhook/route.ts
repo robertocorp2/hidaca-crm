@@ -3,7 +3,7 @@ import type { D1Database } from "@cloudflare/workers-types";
 import { getD1, getDb } from "../../../../db";
 import { contacts, leads, opportunities, whatsappConversations } from "../../../../db/schema";
 import { normalizePhone } from "../../../lib/crm";
-import { persistInboundWhatsAppMessage, renewWhatsAppWebhookClaim, runWhatsAppWebhookDelivery, updateWhatsAppDeliveryStatus, webhookClaimIsActive, type WhatsAppWebhookClaim, whatsappWebhookResponse } from "../../../lib/whatsapp-webhook";
+import { persistInboundWhatsAppMessage, renewWhatsAppWebhookClaim, resolveWhatsAppWebhookEventHash, runWhatsAppWebhookDelivery, updateWhatsAppDeliveryStatus, webhookClaimIsActive, type WhatsAppWebhookClaim, whatsappWebhookResponse } from "../../../lib/whatsapp-webhook";
 import { downloadMetaMedia, verifyWhatsAppSignature } from "../../../lib/whatsapp";
 import { canonicalWhatsAppMessageIdentity, canonicalWhatsAppWebhookIdentity } from "../../../lib/whatsapp-webhook-identity";
 import { env } from "cloudflare:workers";
@@ -24,8 +24,10 @@ export async function POST(request: Request) {
   if (!(await verifyWhatsAppSignature(rawBody, request.headers.get("x-hub-signature-256")))) return new Response("Invalid signature", { status: 401 });
   const payload = JSON.parse(rawBody) as { entry?: Array<{ changes?: Array<{ value?: Record<string, unknown> }> }> };
   const eventIdentity = canonicalWhatsAppWebhookIdentity(payload);
-  const eventHash = await hashBody(eventIdentity ?? rawBody);
+  const legacyEventHash = await hashBody(rawBody);
+  const canonicalEventHash = await hashBody(eventIdentity ?? rawBody);
   const d1 = getD1();
+  const eventHash = await resolveWhatsAppWebhookEventHash(d1, canonicalEventHash, legacyEventHash);
   const now = new Date().toISOString();
   try {
     const delivery = await runWhatsAppWebhookDelivery(d1, { eventHash, eventType: "batch", now }, async (claim) => {
