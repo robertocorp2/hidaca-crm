@@ -38,7 +38,8 @@ test("dashboard receivables use normalized balances and expose a summary endpoin
   assert.match(financials, /LOWER\(TRIM\(COALESCE\(br\.status, ''\)\)\) IN \('cancelado', 'cancelled', 'reemplazado', 'replaced'/);
   assert.match(route, /summary.*===.*1/);
   assert.match(route, /totalBalance/);
-  assert.match(route, /normalized_invoice_read_model/);
+  assert.match(route, /normalized_invoice_read_model_with_legacy_read_through/);
+  assert.match(route, /sources: \["normalized_invoice_read_model", "legacy_read_through"\]/);
   assert.match(route, /balance_amount_snapshot IS NOT NULL/);
   assert.match(route, /legacyReceivables/);
   assert.match(route, /x\.status IN \('replaced', 'void', 'draft'\) THEN x\.status/);
@@ -46,6 +47,8 @@ test("dashboard receivables use normalized balances and expose a summary endpoin
   assert.match(page, /getDashboardReceivableBalance/);
   assert.match(client, /initialReceivableBalance/);
   assert.match(client, /\/api\/receivables\?summary=1/);
+  assert.match(client, /viewHref\("receivables"\)/);
+  assert.doesNotMatch(route, /LIMIT\s+1000/);
   assert.match(billing, /setLegacyRows\(\[\]\)/);
   assert.match(billing, /loadSequence/);
 });

@@ -1867,8 +1867,8 @@ function Dashboard({
         </DashboardLink>
         <DashboardLink
           className="metric-card metric-card-currency"
-          href={viewHref("facturas")}
-          onNavigate={() => onNavigate("facturas")}
+          href={viewHref("receivables")}
+          onNavigate={() => onNavigate("receivables")}
         >
           <span className="metric-heading">
             <span className="metric-icon" aria-hidden="true">

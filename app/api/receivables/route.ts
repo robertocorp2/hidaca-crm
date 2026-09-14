@@ -13,7 +13,8 @@ export async function GET(request: Request) {
     return Response.json({
       totalBalance: await getDashboardReceivableBalance(),
       asOf: now,
-      source: "normalized_invoice_read_model",
+      source: "normalized_invoice_read_model_with_legacy_read_through",
+      sources: ["normalized_invoice_read_model", "legacy_read_through"],
     });
   }
   const receivables =
@@ -72,7 +73,7 @@ export async function GET(request: Request) {
                (? = '31-60' AND julianday(?) - julianday(x.due_date) BETWEEN 31 AND 60) OR
                (? = '61-90' AND julianday(?) - julianday(x.due_date) BETWEEN 61 AND 90) OR
                (? = '90+' AND julianday(?) - julianday(x.due_date) > 90))
-           ORDER BY COALESCE(x.due_date, x.issue_date) ASC LIMIT 1000`,
+           ORDER BY COALESCE(x.due_date, x.issue_date) ASC`,
         )
         .bind(
           now,
@@ -146,7 +147,7 @@ export async function GET(request: Request) {
                (? = '31-60' AND julianday(?) - julianday(due_date) BETWEEN 31 AND 60) OR
                (? = '61-90' AND julianday(?) - julianday(due_date) BETWEEN 61 AND 90) OR
                (? = '90+' AND julianday(?) - julianday(due_date) > 90))
-           ORDER BY COALESCE(due_date, issue_date) ASC LIMIT 1000`,
+           ORDER BY COALESCE(due_date, issue_date) ASC`,
         )
         .bind(
           now,
@@ -169,5 +170,10 @@ export async function GET(request: Request) {
         )
         .all()
     ).results ?? [];
-  return Response.json({ receivables, legacyReceivables, asOf: now });
+  return Response.json({
+    receivables,
+    legacyReceivables,
+    asOf: now,
+    source: "normalized_invoice_read_model_with_legacy_read_through",
+  });
 }
