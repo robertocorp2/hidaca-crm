@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type ButtonHTMLAttributes,
   type MouseEventHandler,
   type ReactNode,
   type SetStateAction,
@@ -79,6 +80,64 @@ export const fontChoices: FontChoice[] = [
     description: "Más expresiva para una interfaz moderna.",
   },
 ];
+
+export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost" | "text";
+export type ButtonSize = "sm" | "md" | "lg";
+
+type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  size?: ButtonSize;
+  variant?: ButtonVariant;
+};
+
+const buttonVariantClasses: Record<ButtonVariant, string> = {
+  danger: "danger-button",
+  ghost: "ghost-button",
+  primary: "primary-button",
+  secondary: "secondary-button",
+  text: "text-button",
+};
+
+function buttonClasses(
+  variant: ButtonVariant,
+  size: ButtonSize,
+  className?: string,
+) {
+  return [
+    buttonVariantClasses[variant],
+    size === "sm" ? "button-size-sm" : size === "lg" ? "button-size-lg" : "",
+    className,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** Canonical HIDACA action control. Keep sizing and semantic intent in one place. */
+export function Button({
+  className,
+  size = "md",
+  variant = "primary",
+  ...props
+}: ButtonProps) {
+  return <button className={buttonClasses(variant, size, className)} {...props} />;
+}
+
+type IconButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  label: string;
+  size?: ButtonSize;
+};
+
+/** Canonical icon-only control; an accessible label is required by the API. */
+export function IconButton({ className, label, size = "md", ...props }: IconButtonProps) {
+  return (
+    <button
+      aria-label={label}
+      className={["icon-button", size === "sm" ? "button-size-sm" : size === "lg" ? "button-size-lg" : "", className]
+        .filter(Boolean)
+        .join(" ")}
+      {...props}
+    />
+  );
+}
 
 export function useFontPreference() {
   const [value, setValue] = useState(() => {

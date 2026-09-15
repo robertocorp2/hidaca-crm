@@ -924,6 +924,38 @@ tbody tr:hover {
   opacity: 0.6;
 }
 
+/* Canonical HIDACA button sizes. Variant classes provide the semantic color; these
+   modifiers provide the shared geometry used by actions across every workspace. */
+.button-size-sm {
+  font-size: 0.76rem !important;
+  min-height: 34px !important;
+  padding: 6px 10px !important;
+}
+.button-size-lg {
+  font-size: 0.9rem !important;
+  min-height: 48px !important;
+  padding: 13px 22px !important;
+}
+.icon-button.button-size-sm {
+  height: 34px;
+  padding: 0 !important;
+  width: 34px;
+}
+.icon-button.button-size-lg {
+  height: 48px;
+  padding: 0 !important;
+  width: 48px;
+}
+.primary-button:focus-visible,
+.secondary-button:focus-visible,
+.danger-button:focus-visible,
+.ghost-button:focus-visible,
+.text-button:focus-visible,
+.icon-button:focus-visible {
+  outline: 3px solid rgba(12, 103, 71, 0.24);
+  outline-offset: 2px;
+}
+
 .confirm-backdrop {
   align-items: center;
   background: rgba(0, 29, 19, 0.72);
@@ -4955,6 +4987,8 @@ textarea:focus-visible {
   border-color: var(--line);
 }
 .compact-action {
+  /* Legacy alias retained for existing record actions; new code should use
+     Button size="sm" / .button-size-sm. */
   border-radius: var(--radius-sm) !important;
   font-size: 0.76rem !important;
   gap: var(--space-1);
@@ -5322,11 +5356,6 @@ textarea:focus-visible {
   align-items: center;
   display: inline-flex;
   gap: 6px;
-}
-.compact-action {
-  font-size: 0.75rem !important;
-  min-height: 34px !important;
-  padding: 6px 10px !important;
 }
 .record-about {
   padding-top: 18px;
