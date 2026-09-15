@@ -27,3 +27,21 @@ test("authorized-user UI exposes permission editing and confirmed deletion", () 
   assert.match(users, /Solo lectura/);
   assert.match(users, /Quitar todos/);
 });
+
+test("authorized-user tabs expose stable keyboard and panel relationships", () => {
+  assert.match(users, /aria-label="Secciones de usuario"/);
+  assert.match(users, /id="user-tab-general"/);
+  assert.match(users, /aria-controls="user-panel-general"/);
+  assert.match(users, /id="user-tab-permissions"/);
+  assert.match(users, /aria-controls="user-panel-permissions"/);
+  assert.match(users, /role="tabpanel"/);
+  assert.match(users, /aria-labelledby="user-tab-general"/);
+  assert.match(users, /aria-labelledby="user-tab-permissions"/);
+  assert.match(users, /hidden=\{tab !== "general"\}/);
+  assert.match(users, /hidden=\{tab !== "permissions"\}/);
+  assert.match(users, /ArrowRight/);
+  assert.match(users, /ArrowLeft/);
+  assert.match(users, /event\.key === "Home"/);
+  assert.match(users, /event\.key === "End"/);
+  assert.match(users, /tabButtons\.current\[nextTab\]\?\.focus\(\)/);
+});
