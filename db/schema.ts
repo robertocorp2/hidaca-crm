@@ -2840,4 +2840,20 @@ export const dailyReportDocuments = sqliteTable("daily_report_documents", {
   createdAt: text("created_at").notNull(),
 }, (table) => [uniqueIndex("daily_report_documents_unique").on(table.reportId, table.documentId), index("daily_report_documents_report_idx").on(table.reportId)]);
 
+export const documentStorageOperations = sqliteTable("document_storage_operations", {
+  id: text("id").primaryKey(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  operationKind: text("operation_kind", { enum: ["upload", "delete"] }).notNull(),
+  status: text("status", { enum: ["pending", "metadata_pending", "r2_pending", "reconcile_required", "failed", "completed"] }).notNull(),
+  documentId: text("document_id").notNull(),
+  objectKey: text("object_key").notNull(),
+  metadataJson: text("metadata_json").notNull().default("{}"),
+  error: text("error"),
+  attempts: integer("attempts").notNull().default(0),
+  createdBy: text("created_by").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+  completedAt: text("completed_at"),
+}, (table) => [uniqueIndex("document_storage_operations_idempotency_unique").on(table.idempotencyKey), index("document_storage_operations_status_idx").on(table.status, table.updatedAt), index("document_storage_operations_document_idx").on(table.documentId)]);
+
 
