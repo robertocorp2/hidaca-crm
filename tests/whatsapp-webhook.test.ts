@@ -95,13 +95,14 @@ function database() {
   return { sqlite, d1: { prepare } as D1Database };
 }
 
-const options = { eventHash: "event-1", eventType: "batch", now: "2026-09-14T04:00:00.000Z", leaseMs: 24 * 60 * 60 * 1000 };
+const options = { eventHash: "event-1", eventType: "batch", now: new Date(Date.now() - 60_000).toISOString(), leaseMs: 24 * 60 * 60 * 1000 };
+const atOffset = (milliseconds: number) => new Date(Date.parse(options.now) + milliseconds).toISOString();
 
 test("successful webhook delivery is terminal and a duplicate is a no-op", async () => {
   const { sqlite, d1 } = database();
   let calls = 0;
   const first = await runWhatsAppWebhookDelivery(d1, options, async () => { calls++; });
-  const duplicate = await runWhatsAppWebhookDelivery(d1, { ...options, now: "2026-09-14T04:00:01.000Z" }, async () => { calls++; });
+  const duplicate = await runWhatsAppWebhookDelivery(d1, { ...options, now: atOffset(1_000) }, async () => { calls++; });
   assert.equal(first.status, "completed");
   assert.equal(duplicate.status, "duplicate");
   assert.equal(calls, 1);
@@ -122,7 +123,7 @@ test("a failed delivery is retryable and records its attempt/error", async () =>
   await assert.rejects(runWhatsAppWebhookDelivery(d1, options, async () => { throw new Error("downstream unavailable"); }));
   const failed = sqlite.prepare("SELECT processing_status,attempt_count,error,processed_at FROM whatsapp_webhook_events").get();
   assert.deepEqual({ ...failed }, { processing_status: "failed", attempt_count: 1, error: "downstream unavailable", processed_at: null });
-  const retry = await runWhatsAppWebhookDelivery(d1, { ...options, now: "2026-09-14T04:00:02.000Z" }, async () => "replayed");
+  const retry = await runWhatsAppWebhookDelivery(d1, { ...options, now: atOffset(2_000) }, async () => "replayed");
   assert.deepEqual(retry, { status: "completed", attemptCount: 2, value: "replayed" });
   assert.equal(sqlite.prepare("SELECT processing_status,attempt_count FROM whatsapp_webhook_events").get()?.processing_status, "processed");
   sqlite.close();
@@ -130,7 +131,7 @@ test("a failed delivery is retryable and records its attempt/error", async () =>
 
 test("an abandoned processing lease can be reclaimed", async () => {
   const { sqlite, d1 } = database();
-  sqlite.prepare("INSERT INTO whatsapp_webhook_events(event_hash,event_type,processing_status,received_at,attempt_count,lease_until) VALUES(?,?,?,?,?,?)").run(options.eventHash, options.eventType, "processing", options.now, 1, "2026-09-14T03:59:00.000Z");
+  sqlite.prepare("INSERT INTO whatsapp_webhook_events(event_hash,event_type,processing_status,received_at,attempt_count,lease_until) VALUES(?,?,?,?,?,?)").run(options.eventHash, options.eventType, "processing", options.now, 1, new Date(Date.parse(options.now) - 60_000).toISOString());
   const result = await runWhatsAppWebhookDelivery(d1, options, async () => "recovered");
   assert.deepEqual(result, { status: "completed", attemptCount: 2, value: "recovered" });
   sqlite.close();
@@ -154,11 +155,11 @@ test("duplicate inbound message persistence does not double-count unread message
   sqlite.prepare("INSERT INTO whatsapp_conversations(id,updated_at) VALUES(?,?)").run("conversation-1", options.now);
   const input = { id: "message-1", conversationId: "conversation-1", metaMessageId: "wamid-1", type: "text", body: "Hola", caption: "", mediaId: null, mediaKey: null, contentType: null, now: options.now };
   assert.equal(await persistInboundWhatsAppMessage(d1, input), true);
-  assert.equal(await persistInboundWhatsAppMessage(d1, { ...input, id: "message-2", now: "2026-09-14T04:00:01.000Z" }), false);
-  assert.equal(await persistInboundWhatsAppMessage(d1, { ...input, id: "message-3", now: "2026-09-14T03:00:00.000Z" }), false);
+  assert.equal(await persistInboundWhatsAppMessage(d1, { ...input, id: "message-2", now: atOffset(1_000) }), false);
+  assert.equal(await persistInboundWhatsAppMessage(d1, { ...input, id: "message-3", now: atOffset(-60 * 60 * 1_000) }), false);
   assert.equal(sqlite.prepare("SELECT unread_count FROM whatsapp_conversations").get()?.unread_count, 1);
   assert.equal(sqlite.prepare("SELECT count(*) AS count FROM whatsapp_messages").get()?.count, 1);
-  assert.equal(sqlite.prepare("SELECT last_inbound_at,service_window_expires_at FROM whatsapp_conversations").get()?.last_inbound_at, "2026-09-14T04:00:01.000Z");
+  assert.equal(sqlite.prepare("SELECT last_inbound_at,service_window_expires_at FROM whatsapp_conversations").get()?.last_inbound_at, atOffset(1_000));
   sqlite.close();
 });
 
@@ -167,9 +168,9 @@ test("status webhooks advance atomically and never regress a failed message", as
   sqlite.prepare("INSERT INTO whatsapp_conversations(id,updated_at) VALUES(?,?)").run("conversation-1", options.now);
   sqlite.prepare("INSERT INTO whatsapp_messages(id,conversation_id,meta_message_id,direction,type,body,caption,status,created_at) VALUES(?,?,?,'outbound','text','','','sent',?)").run("message-1", "conversation-1", "wamid-status", options.now);
   assert.equal(await updateWhatsAppMessageStatus(d1, "wamid-status", "delivered", null, options.now), true);
-  assert.equal(await updateWhatsAppMessageStatus(d1, "wamid-status", "failed", [{ code: "timeout" }], "2026-09-14T04:00:01.000Z"), true);
-  assert.equal(await updateWhatsAppMessageStatus(d1, "wamid-status", "delivered", null, "2026-09-14T04:00:02.000Z"), false);
-  assert.deepEqual({ ...sqlite.prepare("SELECT status,delivered_at,failed_at FROM whatsapp_messages").get() }, { status: "failed", delivered_at: options.now, failed_at: "2026-09-14T04:00:01.000Z" });
+  assert.equal(await updateWhatsAppMessageStatus(d1, "wamid-status", "failed", [{ code: "timeout" }], atOffset(1_000)), true);
+  assert.equal(await updateWhatsAppMessageStatus(d1, "wamid-status", "delivered", null, atOffset(2_000)), false);
+  assert.deepEqual({ ...sqlite.prepare("SELECT status,delivered_at,failed_at FROM whatsapp_messages").get() }, { status: "failed", delivered_at: options.now, failed_at: atOffset(1_000) });
   sqlite.close();
 });
 
@@ -178,7 +179,7 @@ test("status webhooks update campaign recipients and acknowledge stale statuses"
   sqlite.prepare("INSERT INTO whatsapp_campaigns(id,status,updated_at) VALUES(?,?,?)").run("campaign-1", "running", options.now);
   sqlite.prepare("INSERT INTO whatsapp_campaign_recipients(id,campaign_id,meta_message_id,status) VALUES(?,?,?,?)").run("recipient-1", "campaign-1", "wamid-campaign", "sent");
   assert.equal(await updateWhatsAppDeliveryStatus(d1, "wamid-campaign", "delivered", null, options.now), "updated");
-  assert.equal(await updateWhatsAppDeliveryStatus(d1, "wamid-campaign", "sent", null, "2026-09-14T04:00:01.000Z"), "already_applied");
+  assert.equal(await updateWhatsAppDeliveryStatus(d1, "wamid-campaign", "sent", null, atOffset(1_000)), "already_applied");
   assert.equal(sqlite.prepare("SELECT status FROM whatsapp_campaign_recipients").get()?.status, "delivered");
   sqlite.prepare("INSERT INTO whatsapp_campaign_recipients(id,campaign_id,meta_message_id,status) VALUES(?,?,?,?)").run("recipient-2", "campaign-1", "wamid-old-attempt", "sending");
   assert.equal(await updateWhatsAppDeliveryStatus(d1, "wamid-old-attempt", "delivered", null, options.now), "already_applied");
