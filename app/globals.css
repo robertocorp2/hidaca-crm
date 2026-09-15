@@ -439,6 +439,21 @@ p {
   width: 100%;
 }
 
+input[type="radio"],
+input[type="checkbox"] {
+  accent-color: var(--green-700);
+  appearance: auto;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  height: 18px;
+  margin: 0;
+  min-height: 0;
+  padding: 0;
+  width: 18px;
+}
+
 .login-card h1 {
   color: var(--green-950);
   font-size: clamp(2.3rem, 8vw, 4rem);
@@ -1028,6 +1043,11 @@ select:focus,
 textarea:focus {
   border-color: var(--green-700);
   outline: 3px solid rgba(12, 103, 71, 0.12);
+}
+input[type="radio"]:focus-visible,
+input[type="checkbox"]:focus-visible {
+  outline: 3px solid rgba(12, 103, 71, 0.28);
+  outline-offset: 2px;
 }
 
 .form-actions {
@@ -6279,7 +6299,6 @@ textarea:focus-visible {
   box-shadow: 0 0 0 2px rgba(12, 103, 71, 0.1);
 }
 .font-choice-card input {
-  accent-color: var(--green-700);
   margin-top: 4px;
 }
 .font-choice-copy {
