@@ -15,29 +15,41 @@ import {
 } from "../../../lib/search";
 
 type RouteContext = { params: Promise<{ id: string }> };
+type QueryTiming = { name: string; durationMs: number };
+
+async function measureQuery<T>(timings: QueryTiming[], name: string, work: () => Promise<T>): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    return await work();
+  } finally {
+    timings.push({ name, durationMs: Date.now() - startedAt });
+  }
+}
 
 export async function GET(_: Request, context: RouteContext) {
   const auth = await authorizeApi({ module: "clientes", action: "view" });
   if (!auth.ok) return auth.response;
+  const requestStartedAt = Date.now();
+  const queryTimings: QueryTiming[] = [];
   const { id } = await context.params;
   const db = getDb();
-  const [business] = await db
+  const [business] = await measureQuery(queryTimings, "business", () => db
     .select()
     .from(businesses)
     .where(and(eq(businesses.id, id), isNull(businesses.archivedAt)))
-    .limit(1);
+    .limit(1));
   if (!business) {
     return Response.json({ error: "Business no encontrado." }, { status: 404 });
   }
-  const query = async (sqlText: string) =>
+  const query = async (name: string, sqlText: string) => measureQuery(queryTimings, name, async () =>
     (await getD1().prepare(sqlText).bind(id).all<Record<string, unknown>>())
-      .results ?? [];
-  const queryMany = async (sqlText: string, ...bindings: string[]) =>
+      .results ?? []);
+  const queryMany = async (name: string, sqlText: string, ...bindings: string[]) => measureQuery(queryTimings, name, async () =>
     (await getD1().prepare(sqlText).bind(...bindings).all<Record<string, unknown>>())
-      .results ?? [];
-  const queryTwice = async (sqlText: string) =>
+      .results ?? []);
+  const queryTwice = async (name: string, sqlText: string) => measureQuery(queryTimings, name, async () =>
     (await getD1().prepare(sqlText).bind(id, id).all<Record<string, unknown>>())
-      .results ?? [];
+      .results ?? []);
   const [
     relatedContacts,
     projects,
@@ -51,18 +63,18 @@ export async function GET(_: Request, context: RouteContext) {
     cases,
     history,
   ] = await Promise.all([
-    query(`SELECT id, name, email, phone, mobile_phone AS mobilePhone, title
+    query("contacts", `SELECT id, name, email, phone, mobile_phone AS mobilePhone, title
       FROM contacts WHERE business_id = ? AND archived_at IS NULL
       ORDER BY name LIMIT 250`),
-    query(`SELECT id, name, service_category AS serviceCategory, status,
+    query("projects", `SELECT id, name, service_category AS serviceCategory, status,
       updated_at AS updatedAt FROM projects
       WHERE business_id = ? AND archived_at IS NULL
       ORDER BY updated_at DESC LIMIT 250`),
-    query(`SELECT id, title, stage, outcome, estimated_value AS estimatedValue,
+    query("opportunities", `SELECT id, title, stage, outcome, estimated_value AS estimatedValue,
       expected_close_date AS expectedCloseDate FROM opportunities
       WHERE business_id = ? AND archived_at IS NULL
       ORDER BY updated_at DESC LIMIT 250`),
-    query(`SELECT q.id, q.quotation_number AS quotationNumber, q.title, q.status,
+    query("quotations", `SELECT q.id, q.quotation_number AS quotationNumber, q.title, q.status,
       q.currency, q.updated_at AS updatedAt,
       (SELECT source_total FROM quotation_financials f
        JOIN quotation_revisions r ON r.id = f.revision_id
@@ -70,20 +82,20 @@ export async function GET(_: Request, context: RouteContext) {
        r.revision_number DESC LIMIT 1) AS sourceTotal
       FROM quotations q WHERE q.business_id = ? AND q.archived_at IS NULL
       ORDER BY q.updated_at DESC LIMIT 250`),
-    query(`SELECT i.id, i.invoice_number_raw AS invoiceNumberRaw,
+    query("invoices", `SELECT i.id, i.invoice_number_raw AS invoiceNumberRaw,
       i.status, i.issue_date AS issueDate, i.due_date AS dueDate,
       i.currency, i.total_amount AS totalAmount,
       i.balance_amount_snapshot AS balanceAmount,
       i.updated_at AS updatedAt
       FROM invoices i WHERE i.business_id = ? AND i.archived_at IS NULL
       ORDER BY COALESCE(i.issue_date, i.created_at) DESC LIMIT 250`),
-    query(`SELECT id, type, amount, currency, payment_date AS paymentDate,
+    query("payments", `SELECT id, type, amount, currency, payment_date AS paymentDate,
       method, status, label FROM payments
       WHERE business_id = ? ORDER BY COALESCE(payment_date, created_at) DESC LIMIT 250`),
-    query(`SELECT id, type, label, line1, line2, city, province,
+    query("addresses", `SELECT id, type, label, line1, line2, city, province,
       country, is_primary AS isPrimary FROM addresses
       WHERE business_id = ? LIMIT 250`),
-    queryMany(`SELECT DISTINCT d.id, d.name, d.content_type AS contentType,
+    queryMany("documents", `SELECT DISTINCT d.id, d.name, d.content_type AS contentType,
       d.size, d.extension, dl.purpose, dl.created_at AS linkedAt
       FROM documents d JOIN document_links dl ON dl.document_id = d.id
       WHERE (dl.entity_type IN ('business', 'businesses', 'empresa') AND dl.entity_id = ?)
@@ -98,7 +110,7 @@ export async function GET(_: Request, context: RouteContext) {
          OR (dl.entity_type = 'payment' AND dl.entity_id IN (SELECT id FROM payments WHERE business_id = ?))
          OR d.id IN (SELECT source_document_id FROM invoices WHERE business_id = ? AND source_document_id IS NOT NULL)
       ORDER BY linkedAt DESC LIMIT 250`, id, id, id, id, id, id, id, id, id),
-    queryMany(`SELECT NULL AS id, sr.original_filename AS name, NULL AS contentType,
+    queryMany("sourceDocuments", `SELECT NULL AS id, sr.original_filename AS name, NULL AS contentType,
       NULL AS size, NULL AS extension, 'source' AS purpose, sr.created_at AS linkedAt,
       sr.original_uri AS originalUri, sr.availability
       FROM source_references sr
@@ -106,14 +118,14 @@ export async function GET(_: Request, context: RouteContext) {
         SELECT r.id FROM quotation_revisions r JOIN quotations q ON q.id = r.quotation_id WHERE q.business_id = ?
       )
       ORDER BY sr.created_at DESC LIMIT 250`, id),
-    query(`SELECT id, title, status, customer_name AS customerName,
+    query("cases", `SELECT id, title, status, customer_name AS customerName,
       contact, amount, balance, due_date AS dueDate,
       created_at AS createdAt, updated_at AS updatedAt
       FROM business_records
       WHERE module = 'ordenes-cambio' AND archived_at IS NULL
         AND customer_name = (SELECT name FROM businesses WHERE id = ?)
       ORDER BY updated_at DESC LIMIT 250`),
-    queryTwice(`SELECT entity_type AS entityType, entity_id AS entityId, action,
+    queryTwice("history", `SELECT entity_type AS entityType, entity_id AS entityId, action,
       actor_email AS actorEmail, reason, created_at AS createdAt
       FROM entity_history
       WHERE (entity_type = 'business' AND entity_id = ?)
@@ -128,22 +140,30 @@ export async function GET(_: Request, context: RouteContext) {
     const key = String(item.id ?? item.originalUri ?? `${item.name}:${item.linkedAt}`);
     return all.findIndex((candidate) => String(candidate.id ?? candidate.originalUri ?? `${candidate.name}:${candidate.linkedAt}`) === key) === index;
   });
-  return Response.json(
-    {
-      business,
-      contacts: relatedContacts,
-      projects,
-      opportunities: relatedOpportunities,
-      quotations,
-      invoices,
-      payments,
-      addresses,
-      documents: mergedDocuments,
-      cases,
-      history,
-    },
-    { headers: { "cache-control": "private, no-store" } },
-  );
+  const payload = {
+    business,
+    contacts: relatedContacts,
+    projects,
+    opportunities: relatedOpportunities,
+    quotations,
+    invoices,
+    payments,
+    addresses,
+    documents: mergedDocuments,
+    cases,
+    history,
+  };
+  const body = JSON.stringify(payload);
+  const headers = new Headers({
+    "cache-control": "private, no-store",
+    "server-timing": [
+      `total;dur=${Date.now() - requestStartedAt}`,
+      ...queryTimings.map(({ name, durationMs }) => `${name};dur=${durationMs}`),
+    ].join(", "),
+    "x-hidaca-detail-duration-ms": String(Date.now() - requestStartedAt),
+    "x-hidaca-detail-payload-bytes": String(new TextEncoder().encode(body).byteLength),
+  });
+  return new Response(body, { headers });
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
