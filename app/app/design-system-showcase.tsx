@@ -29,12 +29,14 @@ import {
 import {
   ActiveFilterChip,
   AutocompleteInput,
+  Button,
   Breadcrumbs,
   DocumentRow,
   Empty,
   ErrorState,
   FilterableStatus,
   InlineAlert,
+  IconButton,
   LoadingState,
   Modal,
   PageHeader,
@@ -224,10 +226,10 @@ export function DesignSystemShowcase() {
           />
           <PageHeader
             action={
-              <button className="primary-button" type="button">
+              <Button type="button">
                 <Plus aria-hidden="true" size={15} />
                 Nueva acción
-              </button>
+              </Button>
             }
             description="Ejemplo de encabezado compartido para una vista operativa."
             eyebrow="Componente aprobado"
@@ -413,38 +415,30 @@ export function DesignSystemShowcase() {
               </div>
               <div className="ds-control-stack">
                 <div>
-                  <button className="primary-button" type="button">
+                  <Button type="button">
                     <Plus aria-hidden="true" size={16} />
                     Primary action
-                  </button>
-                  <button className="secondary-button" type="button">
+                  </Button>
+                  <Button type="button" variant="secondary">
                     Secondary
-                  </button>
+                  </Button>
                 </div>
                 <div>
-                  <button className="text-button" type="button">
+                  <Button type="button" variant="text">
                     Ver detalle
-                  </button>
-                  <button className="danger-button" type="button">
+                  </Button>
+                  <Button type="button" variant="danger">
                     <CircleX aria-hidden="true" size={15} />
                     Archivar
-                  </button>
+                  </Button>
                 </div>
                 <div>
-                  <button
-                    aria-label="Abrir menú"
-                    className="icon-button ds-icon-button"
-                    type="button"
-                  >
+                  <IconButton className="ds-icon-button" label="Abrir menú" type="button">
                     <Menu aria-hidden="true" size={18} />
-                  </button>
-                  <button
-                    aria-label="Cerrar"
-                    className="icon-button ds-icon-button"
-                    type="button"
-                  >
+                  </IconButton>
+                  <IconButton className="ds-icon-button" label="Cerrar" type="button">
                     <X aria-hidden="true" size={18} />
-                  </button>
+                  </IconButton>
                 </div>
               </div>
             </div>

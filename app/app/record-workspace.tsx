@@ -37,7 +37,7 @@ import type {
 } from "./types";
 import { StoredDocumentPreviewModal } from "./document-preview";
 import { RecordAiPanel } from "./record-ai-panel";
-import { DocumentRow, dateTime, money } from "./ui";
+import { Button, DocumentRow, dateTime, money } from "./ui";
 
 type WorkspaceKind = "business" | "contact";
 
@@ -268,13 +268,13 @@ export function RecordActions({
   const [open, setOpen] = useState(false);
   return (
     <div className="record-actions" aria-label="Acciones del registro">
-      {canWrite && <button className="primary-button compact-action" onClick={onEdit} type="button"><Pencil aria-hidden="true" size={14} />Editar</button>}
+      {canWrite && <Button onClick={onEdit} size="sm"><Pencil aria-hidden="true" size={14} />Editar</Button>}
       {canCreateActivity ? (
-        <button className="secondary-button compact-action" onClick={() => onCreateActivity(recordType, recordId)} type="button">
+        <Button onClick={() => onCreateActivity(recordType, recordId)} size="sm" variant="secondary">
           <Plus aria-hidden="true" size={14} />Actividad
-        </button>
+        </Button>
       ) : canViewActivity ? (
-        <a className="secondary-button compact-action" href="/app?view=schedule" onClick={(event) => {
+        <a className="secondary-button button-size-sm" href="/app?view=schedule" onClick={(event) => {
           if (event.metaKey || event.ctrlKey || event.shiftKey) return;
           event.preventDefault();
           onNavigate("schedule", "");
@@ -285,7 +285,7 @@ export function RecordActions({
           <button
             aria-expanded={open}
             aria-haspopup="menu"
-            className="ghost-button compact-action"
+            className="ghost-button button-size-sm"
             onClick={() => setOpen((current) => !current)}
             type="button"
           >
