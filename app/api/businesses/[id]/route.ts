@@ -155,6 +155,7 @@ export async function GET(_: Request, context: RouteContext) {
   };
   const body = JSON.stringify(payload);
   const headers = new Headers({
+    "content-type": "application/json; charset=utf-8",
     "cache-control": "private, no-store",
     "server-timing": [
       `total;dur=${Date.now() - requestStartedAt}`,

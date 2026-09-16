@@ -8,6 +8,7 @@ test("company detail exposes server timing and payload diagnostics", async () =>
   const route = await read("../app/api/businesses/[id]/route.ts");
   assert.match(route, /measureQuery/);
   assert.match(route, /server-timing/);
+  assert.match(route, /content-type.*application\/json/);
   assert.match(route, /x-hidaca-detail-duration-ms/);
   assert.match(route, /x-hidaca-detail-payload-bytes/);
   assert.match(route, /measureQuery\(queryTimings, "business"/);
