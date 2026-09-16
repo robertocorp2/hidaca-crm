@@ -226,7 +226,7 @@ export function BusinessesView({
       </div>
       {activeBusinessFilters.length > 0 && <div className="list-filter-summary" aria-label="Filtros activos">
         {activeBusinessFilters.map(([key, value]) => <ActiveFilterChip key={key} label={`${businessFilterDefinitions.find((definition) => definition.key === key)?.label ?? key}: ${value}`} onClear={() => setBusinessFilter(key, "")} />)}
-        <button className="text-button" onClick={clearBusinessFilters} type="button">Limpiar filtros</button>
+        <Button onClick={clearBusinessFilters} type="button" variant="text">Limpiar filtros</Button>
       </div>}
       {showForm && (
         <Modal
@@ -638,7 +638,7 @@ export function ContactsView({
       </div>
       {activeContactFilters.length > 0 && <div className="list-filter-summary" aria-label="Filtros activos">
         {activeContactFilters.map(([key, value]) => <ActiveFilterChip key={key} label={`${contactFilterDefinitions.find((definition) => definition.key === key)?.label ?? key}: ${value}`} onClear={() => setContactFilter(key, "")} />)}
-        <button className="text-button" onClick={clearContactFilters} type="button">Limpiar filtros</button>
+        <Button onClick={clearContactFilters} type="button" variant="text">Limpiar filtros</Button>
       </div>}
       {showForm && (
         <Modal

@@ -822,17 +822,17 @@ export function OperationsClient({
           >
             <p>{confirmation.message}</p>
             <div className="confirm-actions">
-              <button
-                className="secondary-button"
+              <Button
                 disabled={busy}
                 onClick={() => setConfirmation(null)}
                 type="button"
+                variant="secondary"
               >
                 Cancelar
-              </button>
-              <button
-                className="danger-button"
+              </Button>
+              <Button
                 disabled={busy}
+                variant="danger"
                 onClick={async () => {
                   setBusy(true);
                   await confirmation.action();
@@ -842,7 +842,7 @@ export function OperationsClient({
                 type="button"
               >
                 {busy ? "Procesando…" : confirmation.confirmLabel}
-              </button>
+              </Button>
             </div>
           </Modal>
         )}

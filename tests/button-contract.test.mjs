@@ -33,7 +33,10 @@ test("shared button primitives expose the canonical variant and size contract", 
   assert.match(showcase, /<IconButton className="ds-icon-button" label="Abrir menú"/);
   assert.match(entities, /<Button[\s\S]*>\s*Nueva empresa/);
   assert.match(entities, /<Button[\s\S]*>\s*Nuevo contacto/);
+  assert.match(entities, /<Button onClick=\{clearBusinessFilters\} type="button" variant="text">/);
+  assert.match(entities, /<Button onClick=\{clearContactFilters\} type="button" variant="text">/);
   assert.match(projects, /<Button[\s\S]*>\s*Nuevo proyecto/);
   assert.match(projects, /<Button[\s\S]*>\s*Editar proyecto/);
   assert.match(operations, /<Button onClick=\{openCreate\}>\s*Nuevo registro/);
+  assert.match(operations, /<Button[\s\S]*variant="danger"[\s\S]*confirmation.action/);
 });
