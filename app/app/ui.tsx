@@ -853,27 +853,29 @@ export function Pagination({
   if (totalPages <= 1) return null;
   return (
     <nav aria-label="Paginación" className="pagination">
-      <button
-        className="secondary-button"
+      <Button
         disabled={page <= 1}
         onClick={() => onPageChange(page - 1)}
+        size="sm"
         type="button"
+        variant="secondary"
       >
         <ChevronLeft aria-hidden="true" size={15} />
         Anterior
-      </button>
+      </Button>
       <span aria-live="polite">
         Página {page} de {totalPages}
       </span>
-      <button
-        className="secondary-button"
+      <Button
         disabled={page >= totalPages}
         onClick={() => onPageChange(page + 1)}
+        size="sm"
         type="button"
+        variant="secondary"
       >
         Siguiente
         <ChevronRight aria-hidden="true" size={15} />
-      </button>
+      </Button>
     </nav>
   );
 }

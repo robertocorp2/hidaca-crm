@@ -1133,10 +1133,6 @@ textarea:focus {
   font-size: 0.78rem;
 }
 
-.pagination .secondary-button {
-  min-height: 40px;
-  padding: 8px 13px;
-}
 .pagination .secondary-button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
