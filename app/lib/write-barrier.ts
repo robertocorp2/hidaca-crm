@@ -66,9 +66,9 @@ export class MaintenanceDrainTimeoutError extends Error {
   }
 }
 
-export async function getMaintenanceStatus(d1: D1Database, now = new Date().toISOString()): Promise<MaintenanceStatus> {
+export async function getMaintenanceStatus(d1: D1Database): Promise<MaintenanceStatus> {
   const state = await getState(d1);
-  const activeWriters = await allActiveWriters(d1, now);
+  const activeWriters = await allActiveWriters(d1);
   return {
     mode: state.mode,
     generation: state.generation,
@@ -193,7 +193,7 @@ export async function enterMaintenance(
   const deadline = Date.now() + timeoutMs;
   const state = await getState(d1);
   while (true) {
-    const activeWriters = await activeWritersFor(d1, state.generation, new Date().toISOString());
+    const activeWriters = await activeWritersFor(d1, state.generation);
     if (!activeWriters.length) return getMaintenanceStatus(d1);
     if (Date.now() >= deadline) throw new MaintenanceDrainTimeoutError(activeWriters);
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -202,7 +202,7 @@ export async function enterMaintenance(
 
 export async function reopenMaintenance(d1: D1Database, operatorEmail: string) {
   const currentState = await getState(d1);
-  const activeWriters = await allActiveWriters(d1, new Date().toISOString());
+  const activeWriters = await allActiveWriters(d1);
   if (currentState.mode === "maintenance" && activeWriters.length) throw new MaintenanceDrainTimeoutError(activeWriters);
   const now = new Date().toISOString();
   const result = await d1
@@ -242,28 +242,27 @@ async function getState(d1: D1Database) {
   return state;
 }
 
-async function activeWritersFor(d1: D1Database, generation: number, now: string) {
+async function activeWritersFor(d1: D1Database, generation: number) {
   const result = await d1
     .prepare(
       `SELECT id, generation, writer_kind, request_id, started_at, renewed_at, expires_at
        FROM write_leases
-       WHERE outcome IS NULL AND generation < ? AND expires_at > ?
+       WHERE outcome IS NULL AND generation < ?
        ORDER BY started_at`,
     )
-    .bind(generation, now)
+    .bind(generation)
     .all<ActiveWriterRow>();
   return (result.results ?? []).map(toActiveWriter);
 }
 
-async function allActiveWriters(d1: D1Database, now: string) {
+async function allActiveWriters(d1: D1Database) {
   const result = await d1
     .prepare(
       `SELECT id, generation, writer_kind, request_id, started_at, renewed_at, expires_at
        FROM write_leases
-       WHERE outcome IS NULL AND expires_at > ?
+       WHERE outcome IS NULL
        ORDER BY started_at`,
     )
-    .bind(now)
     .all<ActiveWriterRow>();
   return (result.results ?? []).map(toActiveWriter);
 }

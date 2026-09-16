@@ -50,11 +50,13 @@ Authenticated administrators use these endpoints:
 - `POST /api/maintenance/reopen` — advance the generation and reopen writes
   only after restore and reconciliation succeed.
 
-The enter operation returns `409 MAINTENANCE_DRAIN_TIMEOUT` if active leases
-remain at the deadline. Leave the system in maintenance mode, inspect the
-reported writer IDs and logs, and abort the restore until the writers finish or
-the external client is stopped. New mutations receive `503 MAINTENANCE_MODE`
-with `Retry-After: 60`.
+The enter operation returns `409 MAINTENANCE_DRAIN_TIMEOUT` if active or
+unresolved leases remain at the deadline. An expired lease is not proof that
+its writer stopped: leave the system in maintenance mode, inspect the reported
+writer IDs and logs, and abort the restore until the writer finishes or the
+external client is stopped. Resolve an abandoned lease only after verifying
+that its request is no longer running. New mutations receive
+`503 MAINTENANCE_MODE` with `Retry-After: 60`.
 
 ## Database rollback
 

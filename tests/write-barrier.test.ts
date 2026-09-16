@@ -79,6 +79,25 @@ test("reopen refuses to bypass an active drain", async () => {
   }
 });
 
+test("an expired unreleased lease remains an unknown writer until resolved", async () => {
+  const { binding, sqlite } = database();
+  try {
+    const lease = await acquireWriteLease(binding, "api:unknown", "request-unknown", 1_000);
+    sqlite.prepare("UPDATE write_leases SET expires_at = ? WHERE id = ?").run("2020-01-01T00:00:00.000Z", lease.id);
+    await assert.rejects(
+      () => enterMaintenance(binding, { reason: "expired lease drill", operatorEmail: "admin@example.com", timeoutMs: 0 }),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, "MAINTENANCE_DRAIN_TIMEOUT");
+        assert.equal((error as { activeWriters?: Array<{ id: string }> }).activeWriters?.[0]?.id, lease.id);
+        return true;
+      },
+    );
+    await releaseWriteLease(binding, lease, "failed");
+  } finally {
+    sqlite.close();
+  }
+});
+
 test("maintenance mode response is retryable and does not cache", () => {
   const response = maintenanceResponse();
   assert.equal(response.status, 503);
