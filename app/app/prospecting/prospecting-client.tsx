@@ -103,7 +103,7 @@ export function ProspectingClient({ role }: { role: "admin" | "operator" | "view
     setRows(previous => previous.map(row => selected.includes(row.prospect.id) ? { ...row, jobs: result.jobs.filter(job => job.prospectId === row.prospect.id) } : row));
   }
   async function preview(items?: ConversionPreview["mapping"][]) {
-    const result = await api<{ previews: ConversionPreview[] }>("prospect-selections/preview", "POST", { items: items ?? selected.map(id => { const row = rows.find(r => r.prospect.id === id); return { prospectId: id, contactName: "", contactPhone: "", companyName: "", companyAddress: "", companyPhone: "", companyWebsite: "", opportunityTitle: "" }; }) });
+    const result = await api<{ previews: ConversionPreview[] }>("prospect-selections/preview", "POST", { items: items ?? selected.map(id => ({ prospectId: id, contactName: "", contactPhone: "", companyName: "", companyAddress: "", companyPhone: "", companyWebsite: "", opportunityTitle: "" })) });
     setPreviews(result.previews); setPreviewValid(true); conversionKey.current = key();
   }
   async function convert() {

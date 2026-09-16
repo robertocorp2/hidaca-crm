@@ -3,7 +3,7 @@ import test from "node:test";
 import { ProviderAdapter } from "../app/lib/prospecting/providers";
 import { ProspectingService } from "../app/lib/prospecting/service";
 import { WorkerRuntime } from "../app/lib/prospecting/runtime";
-import { context, database, facts, searchInput, switches, testPolicy } from "./prospecting-support";
+import { context, database, facts, searchInput, switches } from "./prospecting-support";
 
 test("Google-only provider data cannot be forwarded to enrichment adapters", async () => {
   const adapter = new ProviderAdapter("pagespeed", "test-key", async () => { throw new Error("network must not be called"); });

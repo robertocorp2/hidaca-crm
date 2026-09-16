@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Bot, CalendarPlus, CheckCircle2, ShieldCheck, Sparkles } from "lucide-react";
 import { Modal } from "./ui";
 
@@ -70,11 +70,7 @@ export function RecordAiPanel({
   const [answer, setAnswer] = useState("");
   const [approval, setApproval] = useState<Approval | null>(null);
   const [activityTitle, setActivityTitle] = useState(`Seguimiento: ${title}`.slice(0, 200));
-  const [activityStart, setActivityStart] = useState("");
-
-  useEffect(() => {
-    setActivityStart(localInputDate(24));
-  }, []);
+  const [activityStart, setActivityStart] = useState(() => localInputDate(24));
 
   const relationCount = useMemo(
     () => Object.values(context?.relations ?? {}).reduce((total, rows) => total + rows.length, 0),

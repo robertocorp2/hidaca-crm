@@ -158,6 +158,7 @@ export default async function OperationsPage({
   ]);
 
   // Keep time-sensitive dashboard totals deterministic across server and client render.
+  // eslint-disable-next-line react-hooks/purity
   const initialNow = Date.now();
 
   return (

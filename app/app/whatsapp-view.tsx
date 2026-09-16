@@ -129,8 +129,8 @@ export function WhatsAppView({
       );
   }, [selectedId]);
   // Polling and focus refresh intentionally synchronize remote inbox state.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadInbox();
     const timer = window.setInterval(() => void loadInbox(), 5000);
     const onFocus = () => void loadInbox();
@@ -140,8 +140,8 @@ export function WhatsAppView({
       window.removeEventListener("focus", onFocus);
     };
   }, [loadInbox]);
-  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadSelected();
   }, [loadSelected]);
   useEffect(() => {
