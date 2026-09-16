@@ -6,6 +6,7 @@ import { RecordWorkspace } from "./record-workspace";
 import {
   ActiveFilterChip,
   AutocompleteInput,
+  Button,
   Breadcrumbs,
   ColumnFilterPopover,
   Empty,
@@ -196,8 +197,7 @@ export function BusinessesView({
       <Breadcrumbs items={[{ label: "Inicio" }, { label: "Empresas" }]} />
       <PageHeader
         action={shared.canWrite ? (
-          <button
-            className="primary-button"
+          <Button
             onClick={() => {
               setEditing(null);
               setFormError("");
@@ -206,7 +206,7 @@ export function BusinessesView({
             type="button"
           >
             Nueva empresa
-          </button>
+          </Button>
         ) : undefined}
         description="Organizaciones y clientes comerciales."
         eyebrow="CRM"
@@ -289,8 +289,7 @@ export function BusinessesView({
           <Empty
             action={
               shared.canWrite ? (
-                <button
-                  className="primary-button"
+                <Button
                   onClick={() => {
                     setEditing(null);
                     setFormError("");
@@ -299,7 +298,7 @@ export function BusinessesView({
                   type="button"
                 >
                   Nueva empresa
-                </button>
+                </Button>
               ) : undefined
             }
             text="No hay empresas en esta vista."
@@ -425,16 +424,16 @@ function BusinessForm({
         </label>
       </div>
       <div className="form-actions">
-        <button
-          className="secondary-button"
+        <Button
           onClick={requestCancel}
+          variant="secondary"
           type="button"
         >
           Cancelar
-        </button>
-        <button className="primary-button" disabled={busy}>
+        </Button>
+        <Button disabled={busy}>
           {busy ? "Guardando…" : "Guardar"}
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -602,8 +601,7 @@ export function ContactsView({
       <Breadcrumbs items={[{ label: "Inicio" }, { label: "Contactos" }]} />
       <PageHeader
         action={shared.canWrite ? (
-          <button
-            className="primary-button"
+          <Button
             onClick={() => {
               setEditing(null);
               setFormError("");
@@ -612,7 +610,7 @@ export function ContactsView({
             type="button"
           >
             Nuevo contacto
-          </button>
+          </Button>
         ) : undefined}
         description="Personas relacionadas con cada empresa."
         eyebrow="CRM"
@@ -707,8 +705,7 @@ export function ContactsView({
           <Empty
             action={
               shared.canWrite ? (
-                <button
-                  className="primary-button"
+                <Button
                   onClick={() => {
                     setEditing(null);
                     setFormError("");
@@ -717,7 +714,7 @@ export function ContactsView({
                   type="button"
                 >
                   Nuevo contacto
-                </button>
+                </Button>
               ) : undefined
             }
             text="No hay contactos en esta vista."
@@ -846,16 +843,16 @@ function ContactForm({
         </label>
       </div>
       <div className="form-actions">
-        <button
-          className="secondary-button"
+        <Button
           onClick={requestCancel}
+          variant="secondary"
           type="button"
         >
           Cancelar
-        </button>
-        <button className="primary-button" disabled={busy}>
+        </Button>
+        <Button disabled={busy}>
           {busy ? "Guardando…" : "Guardar"}
-        </button>
+        </Button>
       </div>
     </form>
   );

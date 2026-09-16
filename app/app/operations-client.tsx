@@ -70,6 +70,7 @@ import {
   Empty,
   AppearancePreferences,
   AutocompleteInput,
+  Button,
   ColumnFilterPopover,
   FilterableStatus,
   Modal,
@@ -1448,9 +1449,9 @@ export function OperationsClient({
                 <PageHeader
                   action={
                     canWrite ? (
-                      <button className="primary-button" onClick={openCreate}>
+                      <Button onClick={openCreate}>
                         Nuevo registro
-                      </button>
+                      </Button>
                     ) : undefined
                   }
                   description="Consulta, registra y actualiza información."
