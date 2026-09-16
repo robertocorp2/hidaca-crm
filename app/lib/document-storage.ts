@@ -1,6 +1,7 @@
 import { getD1 } from "../../db";
 import {
   buildDocumentStorageReport,
+  metadataMatchesOperation,
   type DocumentInventoryItem,
   type DocumentObjectInventoryItem,
   type DocumentStorageMetadata,
@@ -14,6 +15,7 @@ import {
 
 export {
   buildDocumentStorageReport,
+  metadataMatchesOperation,
   requestIdempotencyKey,
 } from "./document-storage-model";
 export type * from "./document-storage-model";
@@ -195,7 +197,12 @@ export async function reconcileDocumentStorage(
     for (const operation of snapshot.operations) {
       const metadata = await findDocumentStorageOperationById(operation.id);
       const parsed = metadata ? metadataFromOperation(metadata) : null;
-      if (operation.kind === "upload" && parsed && objectKeys.has(operation.objectKey)) {
+      if (
+        operation.kind === "upload" &&
+        parsed &&
+        metadataMatchesOperation(operation, parsed) &&
+        objectKeys.has(operation.objectKey)
+      ) {
         if (!documentById.has(operation.documentId)) {
           await d1
             .prepare(

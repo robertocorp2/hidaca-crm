@@ -74,6 +74,13 @@ export function requestIdempotencyKey(request: Request, fallback: string) {
   return (value.trim() || fallback).slice(0, 180);
 }
 
+export function metadataMatchesOperation(
+  operation: Pick<DocumentStorageOperation, "documentId" | "objectKey">,
+  metadata: DocumentStorageMetadata,
+) {
+  return metadata.id === operation.documentId && metadata.objectKey === operation.objectKey;
+}
+
 export function buildDocumentStorageReport(input: {
   documents: DocumentInventoryItem[];
   objects: DocumentObjectInventoryItem[];

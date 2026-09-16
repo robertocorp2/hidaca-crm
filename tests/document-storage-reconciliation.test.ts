@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildDocumentStorageReport, requestIdempotencyKey } from "../app/lib/document-storage-model";
+import { buildDocumentStorageReport, metadataMatchesOperation, requestIdempotencyKey } from "../app/lib/document-storage-model";
 
 test("document storage reconciliation reports missing and orphaned R2 bytes", () => {
   const report = buildDocumentStorageReport({
@@ -53,4 +53,21 @@ test("idempotency key accepts the standard and legacy header names", () => {
     ),
     "delete-1",
   );
+});
+
+test("metadata repair is fenced to the operation document and object", () => {
+  const operation = { documentId: "doc-1", objectKey: "documents/doc-1" };
+  const metadata = {
+    id: "doc-1",
+    recordId: null,
+    name: "proof.pdf",
+    objectKey: "documents/doc-1",
+    contentType: "application/pdf",
+    size: 4,
+    createdBy: "operator@example.com",
+    createdAt: "2026-09-16T00:00:00.000Z",
+  };
+  assert.equal(metadataMatchesOperation(operation, metadata), true);
+  assert.equal(metadataMatchesOperation(operation, { ...metadata, id: "other-doc" }), false);
+  assert.equal(metadataMatchesOperation(operation, { ...metadata, objectKey: "documents/other-doc" }), false);
 });
