@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { database } from "./prospecting-support";
 import {
@@ -12,6 +13,21 @@ import {
   withWriteLease,
 } from "../app/lib/write-barrier";
 import { reconcileRollback } from "../app/lib/rollback-reconciliation";
+
+test("production writer entry points stay behind the shared barrier", async () => {
+  const [worker, gateway, scheduled, webhook] = await Promise.all([
+    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../worker/ecf-gateway.ts", import.meta.url), "utf8"),
+    readFile(new URL("../worker/prospecting.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/whatsapp/webhook/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(worker, /withWriteLease\(env\.DB, writerKind\(url\.pathname\)/);
+  assert.match(worker, /WRITE_LEASE_ID_HEADER/);
+  assert.match(worker, /WRITE_LEASE_GENERATION_HEADER/);
+  assert.match(gateway, /withWriteLease\(env\.DB, "ecf-gateway"/);
+  assert.match(scheduled, /withWriteLease\(env\.DB, "prospecting-scheduled"/);
+  assert.match(webhook, /assertRequestWriteLease\(d1, request\)/);
+});
 
 test("write leases are visible, fenced, and released", async () => {
   const { binding, sqlite } = database();
