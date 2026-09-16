@@ -674,8 +674,8 @@ function CloseDialog({
         <p>Cerrada es la etapa final. Selecciona un resultado de cierre.</p>
         <fieldset className="outcome-options">
           <legend>Resultado del cierre</legend>
-          <label><input checked={outcome === "won"} name="outcome" onChange={() => setOutcome("won")} required type="radio" value="won" /> Ganada</label>
-          <label><input checked={outcome === "lost"} name="outcome" onChange={() => setOutcome("lost")} required type="radio" value="lost" /> Perdida</label>
+          <label><input checked={outcome === "won"} className="choice-control" name="outcome" onChange={() => setOutcome("won")} required type="radio" value="won" /> Ganada</label>
+          <label><input checked={outcome === "lost"} className="choice-control" name="outcome" onChange={() => setOutcome("lost")} required type="radio" value="lost" /> Perdida</label>
         </fieldset>
         {outcome === "lost" && <label>Motivo de pérdida<textarea name="lossReason" required rows={4} /></label>}
         <div className="form-actions"><button className="secondary-button" onClick={requestCancel} type="button">Cancelar</button><button className="primary-button" disabled={busy || !outcome}>{busy ? "Cerrando…" : `Cerrar como ${outcome ? opportunityOutcomeLabels[outcome as "won" | "lost"] : ""}`}</button></div>

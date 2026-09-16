@@ -607,6 +607,7 @@ function ActivityForm({
         <label className="check-label">
           <input
             defaultChecked={activity?.allDay}
+            className="choice-control"
             name="allDay"
             type="checkbox"
           />{" "}

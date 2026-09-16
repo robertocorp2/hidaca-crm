@@ -439,8 +439,7 @@ p {
   width: 100%;
 }
 
-input[type="radio"],
-input[type="checkbox"] {
+.choice-control {
   accent-color: var(--green-700);
   appearance: auto;
   background: transparent;
@@ -1044,8 +1043,7 @@ textarea:focus {
   border-color: var(--green-700);
   outline: 3px solid rgba(12, 103, 71, 0.12);
 }
-input[type="radio"]:focus-visible,
-input[type="checkbox"]:focus-visible {
+.choice-control:focus-visible {
   outline: 3px solid rgba(12, 103, 71, 0.28);
   outline-offset: 2px;
 }

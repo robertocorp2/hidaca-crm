@@ -226,6 +226,7 @@ export function AiSettingsView() {
                   },
                 })
               }
+              className="choice-control"
               type="checkbox"
             />
             <span>IA habilitada en configuración</span>
@@ -261,6 +262,7 @@ export function AiSettingsView() {
                   },
                 })
               }
+              className="choice-control"
               type="checkbox"
             />
             <span>Fallback automático para lectura</span>
@@ -277,6 +279,7 @@ export function AiSettingsView() {
                   },
                 })
               }
+              className="choice-control"
               type="checkbox"
             />
             <span>Cloudflare AI Gateway</span>
@@ -320,6 +323,7 @@ export function AiSettingsView() {
                 onChange={(event) =>
                   updateProvider(index, "enabled", event.target.checked)
                 }
+                className="choice-control"
                 type="checkbox"
               />
               <span>Habilitado</span>
