@@ -16,6 +16,9 @@ test("document upload and delete routes persist retryable storage operations", a
   }
   assert.match(upload, /x-idempotent-replay/);
   assert.match(remove, /r2_pending/);
+  assert.match(upload, /sha256Hex/);
+  assert.match(upload, /sha256: fileSha256/);
+  assert.match(upload, /existing operation.*cannot be validated|operación existente no se puede validar/i);
 });
 
 test("document reconciliation is private and repair requires explicit admin intent", async () => {

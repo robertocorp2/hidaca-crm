@@ -9,6 +9,7 @@ import {
   findDocumentStorageOperation,
   metadataFromOperation,
   requestIdempotencyKey,
+  sha256Hex,
   transitionDocumentStorageOperation,
 } from "../../lib/document-storage";
 import { upsertSearchDocument } from "../../lib/search";
@@ -66,6 +67,8 @@ export async function POST(request: Request) {
   }
 
   const now = new Date().toISOString();
+  const fileBytes = await file.arrayBuffer();
+  const fileSha256 = await sha256Hex(fileBytes);
   const idempotencyKey = requestIdempotencyKey(
     request,
     `upload:${crypto.randomUUID()}`,
@@ -79,12 +82,19 @@ export async function POST(request: Request) {
       { status: 409 },
     );
   }
+  if (existing && !existingMetadata) {
+    return Response.json(
+      { error: "La operación existente no se puede validar; usa una clave nueva." },
+      { status: 409 },
+    );
+  }
   if (
     existingMetadata &&
     (existingMetadata.name !== name ||
       existingMetadata.contentType !== file.type ||
       existingMetadata.size !== file.size ||
-      existingMetadata.recordId !== recordId)
+      existingMetadata.recordId !== recordId ||
+      existingMetadata.sha256 !== fileSha256)
   ) {
     return Response.json(
       { error: "La clave de idempotencia no coincide con el archivo original." },
@@ -124,6 +134,7 @@ export async function POST(request: Request) {
         size: file.size,
         createdBy: auth.user.email,
         createdAt: now,
+        sha256: fileSha256,
       },
       createdBy: auth.user.email,
       now,
@@ -138,11 +149,12 @@ export async function POST(request: Request) {
   const objectKey = operation.objectKey;
   const operationMetadata = metadataFromOperation(operation);
   if (
-    operationMetadata &&
-    (operationMetadata.name !== name ||
-      operationMetadata.contentType !== file.type ||
-      operationMetadata.size !== file.size ||
-      operationMetadata.recordId !== recordId)
+    !operationMetadata ||
+    operationMetadata.name !== name ||
+    operationMetadata.contentType !== file.type ||
+    operationMetadata.size !== file.size ||
+    operationMetadata.recordId !== recordId ||
+    operationMetadata.sha256 !== fileSha256
   ) {
     return Response.json(
       { error: "La clave de idempotencia no coincide con el archivo original." },
@@ -152,7 +164,7 @@ export async function POST(request: Request) {
 
   try {
     await transitionDocumentStorageOperation(operation.id, "pending", now);
-    await filesBucket().put(objectKey, await file.arrayBuffer(), {
+    await filesBucket().put(objectKey, fileBytes, {
       httpMetadata: { contentType: file.type },
     });
     await transitionDocumentStorageOperation(

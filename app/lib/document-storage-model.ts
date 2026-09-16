@@ -16,6 +16,7 @@ export type DocumentStorageMetadata = {
   size: number;
   createdBy: string;
   createdAt: string;
+  sha256?: string;
 };
 
 export type DocumentStorageOperation = {
@@ -79,6 +80,13 @@ export function metadataMatchesOperation(
   metadata: DocumentStorageMetadata,
 ) {
   return metadata.id === operation.documentId && metadata.objectKey === operation.objectKey;
+}
+
+export async function sha256Hex(value: ArrayBuffer) {
+  const digest = await crypto.subtle.digest("SHA-256", value);
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 export function buildDocumentStorageReport(input: {

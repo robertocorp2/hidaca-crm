@@ -17,6 +17,7 @@ export {
   buildDocumentStorageReport,
   metadataMatchesOperation,
   requestIdempotencyKey,
+  sha256Hex,
 } from "./document-storage-model";
 export type * from "./document-storage-model";
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildDocumentStorageReport, metadataMatchesOperation, requestIdempotencyKey } from "../app/lib/document-storage-model";
+import { buildDocumentStorageReport, metadataMatchesOperation, requestIdempotencyKey, sha256Hex } from "../app/lib/document-storage-model";
 
 test("document storage reconciliation reports missing and orphaned R2 bytes", () => {
   const report = buildDocumentStorageReport({
@@ -70,4 +70,11 @@ test("metadata repair is fenced to the operation document and object", () => {
   assert.equal(metadataMatchesOperation(operation, metadata), true);
   assert.equal(metadataMatchesOperation(operation, { ...metadata, id: "other-doc" }), false);
   assert.equal(metadataMatchesOperation(operation, { ...metadata, objectKey: "documents/other-doc" }), false);
+});
+
+test("upload fingerprints make same-key retries content-stable", async () => {
+  assert.equal(
+    await sha256Hex(new TextEncoder().encode("proof").buffer as ArrayBuffer),
+    "c1cda26362828b69266512052b97cb3729e3b052e4ade47c0a1e3383defe73c7",
+  );
 });
