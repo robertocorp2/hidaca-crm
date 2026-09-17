@@ -24,7 +24,7 @@ test("appearance choice controls opt out of text-input sizing", async () => {
       source.match(/className="choice-control"/g)?.length,
     );
   }
-  assert.match(css, /\.choice-control\s*\{[\s\S]*appearance:\s*auto;[\s\S]*min-height:\s*0;[\s\S]*width:\s*18px;/);
+  assert.match(css, /\.choice-control\s*\{[\s\S]*appearance:\s*auto;[\s\S]*flex:\s*0 0 18px;[\s\S]*min-height:\s*0;[\s\S]*width:\s*18px;/);
   assert.match(css, /\.choice-control:focus-visible\s*\{/);
   assert.doesNotMatch(css, /input\[type="radio"\],\s*input\[type="checkbox"\]\s*\{/);
 });
