@@ -35,6 +35,8 @@ test("authorized-user tabs expose stable keyboard and panel relationships", () =
   assert.match(users, /id="user-tab-permissions"/);
   assert.match(users, /aria-controls="user-panel-permissions"/);
   assert.match(users, /role="tabpanel"/);
+  assert.equal((users.match(/role="tab"/g) ?? []).length, 2);
+  assert.equal((users.match(/role="tabpanel"/g) ?? []).length, 2);
   assert.match(users, /aria-labelledby="user-tab-general"/);
   assert.match(users, /aria-labelledby="user-tab-permissions"/);
   assert.match(users, /hidden=\{tab !== "general"\}/);
