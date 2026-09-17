@@ -198,6 +198,9 @@ export function UsersAdminView({
   const availableTabs: UserTab[] = access.administer ? ["general", "permissions"] : ["general"];
 
   function handleTabKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const navigationKey = ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"].includes(event.key);
+    if (!navigationKey) return;
+    event.preventDefault();
     const currentIndex = Math.max(0, availableTabs.indexOf(tab));
     let nextIndex = currentIndex;
     if (event.key === "ArrowRight" || event.key === "ArrowDown") nextIndex = (currentIndex + 1) % availableTabs.length;
@@ -205,7 +208,6 @@ export function UsersAdminView({
     if (event.key === "Home") nextIndex = 0;
     if (event.key === "End") nextIndex = availableTabs.length - 1;
     if (nextIndex === currentIndex) return;
-    event.preventDefault();
     const nextTab = availableTabs[nextIndex];
     setTab(nextTab);
     tabButtons.current[nextTab]?.focus();

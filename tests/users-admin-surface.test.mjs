@@ -43,6 +43,9 @@ test("authorized-user tabs expose stable keyboard and panel relationships", () =
   assert.match(users, /ArrowLeft/);
   assert.match(users, /event\.key === "Home"/);
   assert.match(users, /event\.key === "End"/);
+  assert.match(users, /const navigationKey = \["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"\]\.includes\(event\.key\)/);
+  assert.match(users, /if \(!navigationKey\) return;/);
+  assert.match(users, /event\.preventDefault\(\);/);
   assert.match(users, /tabButtons\.current\[nextTab\]\?\.focus\(\)/);
   assert.match(users, /aria-selected=\{tab === "general"\}/);
   assert.match(users, /aria-selected=\{tab === "permissions"\}/);
