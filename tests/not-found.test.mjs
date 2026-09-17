@@ -7,7 +7,9 @@ test("branded not-found route exposes an accessible authenticated recovery path"
 
   assert.match(page, /<main className="login-shell"/);
   assert.match(page, /<h1 id="not-found-title">Página no encontrada<\/h1>/);
+  assert.equal((page.match(/<h1\b/g) ?? []).length, 1);
   assert.match(page, /aria-labelledby="not-found-title"/);
   assert.match(page, /<Link className="primary-button" href="\/app">/);
   assert.match(page, /El acceso al CRM sigue protegido/);
+  assert.doesNotMatch(page, /(?:\/api\/|drizzle|database|db\.|fetch\()/i);
 });
