@@ -1,9 +1,17 @@
 import { env } from "cloudflare:workers";
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db";
 import { documents } from "../../../db/schema";
 import { writeAudit } from "../../lib/audit";
 import { authorizeApi } from "../../lib/authorization";
+import {
+  createDocumentStorageOperation,
+  findDocumentStorageOperation,
+  metadataFromOperation,
+  requestIdempotencyKey,
+  sha256Hex,
+  transitionDocumentStorageOperation,
+} from "../../lib/document-storage";
 import { upsertSearchDocument } from "../../lib/search";
 
 type FilesBucket = {
@@ -58,35 +66,168 @@ export async function POST(request: Request) {
     );
   }
 
-  const id = crypto.randomUUID();
-  const objectKey = `documents/${id}`;
-  await filesBucket().put(objectKey, await file.arrayBuffer(), {
-    httpMetadata: { contentType: file.type },
-  });
-  const [document] = await getDb()
-    .insert(documents)
-    .values({
-      id,
-      recordId,
-      name: file.name.slice(0, 180),
-      objectKey,
-      contentType: file.type,
-      size: file.size,
+  const now = new Date().toISOString();
+  const fileBytes = await file.arrayBuffer();
+  const fileSha256 = await sha256Hex(fileBytes);
+  const idempotencyKey = requestIdempotencyKey(
+    request,
+    `upload:${crypto.randomUUID()}`,
+  );
+  const name = file.name.slice(0, 180);
+  const existing = await findDocumentStorageOperation(idempotencyKey);
+  const existingMetadata = existing ? metadataFromOperation(existing) : null;
+  if (existing && existing.kind !== "upload") {
+    return Response.json(
+      { error: "La clave de idempotencia ya pertenece a otra operación." },
+      { status: 409 },
+    );
+  }
+  if (existing && !existingMetadata) {
+    return Response.json(
+      { error: "La operación existente no se puede validar; usa una clave nueva." },
+      { status: 409 },
+    );
+  }
+  if (
+    existingMetadata &&
+    (existingMetadata.name !== name ||
+      existingMetadata.contentType !== file.type ||
+      existingMetadata.size !== file.size ||
+      existingMetadata.recordId !== recordId ||
+      existingMetadata.sha256 !== fileSha256)
+  ) {
+    return Response.json(
+      { error: "La clave de idempotencia no coincide con el archivo original." },
+      { status: 409 },
+    );
+  }
+  if (existing?.status === "completed") {
+    const [document] = await getDb()
+      .select()
+      .from(documents)
+      .where(eq(documents.id, existing.documentId))
+      .limit(1);
+    if (document) {
+      return Response.json(
+        { document, operationId: existing.id, replay: true },
+        { headers: { "x-idempotent-replay": "true" } },
+      );
+    }
+  }
+
+  const proposedId = existing?.documentId ?? crypto.randomUUID();
+  const proposedObjectKey = existing?.objectKey ?? `documents/${proposedId}`;
+  const operation =
+    existing ??
+    (await createDocumentStorageOperation({
+      id: proposedId,
+      idempotencyKey,
+      kind: "upload",
+      documentId: proposedId,
+      objectKey: proposedObjectKey,
+      metadata: {
+        id: proposedId,
+        recordId,
+        name,
+        objectKey: proposedObjectKey,
+        contentType: file.type,
+        size: file.size,
+        createdBy: auth.user.email,
+        createdAt: now,
+        sha256: fileSha256,
+      },
       createdBy: auth.user.email,
-      createdAt: new Date().toISOString(),
-    })
-    .returning();
-  await Promise.all([
-    writeAudit(auth.user.email, "upload", "document", id, document.name),
-    upsertSearchDocument({
-      entityType: "document",
-      entityId: id,
-      title: document.name,
-      subtitle: document.contentType,
-      searchText: document.name,
-      ownerEmail: document.createdBy,
-      updatedAt: document.createdAt,
-    }),
-  ]);
-  return Response.json({ document }, { status: 201 });
+      now,
+    }));
+  if (!operation) {
+    return Response.json(
+      { error: "No se pudo registrar la operación de almacenamiento." },
+      { status: 503 },
+    );
+  }
+  const id = operation.documentId;
+  const objectKey = operation.objectKey;
+  const operationMetadata = metadataFromOperation(operation);
+  if (
+    !operationMetadata ||
+    operationMetadata.name !== name ||
+    operationMetadata.contentType !== file.type ||
+    operationMetadata.size !== file.size ||
+    operationMetadata.recordId !== recordId ||
+    operationMetadata.sha256 !== fileSha256
+  ) {
+    return Response.json(
+      { error: "La clave de idempotencia no coincide con el archivo original." },
+      { status: 409 },
+    );
+  }
+
+  try {
+    await transitionDocumentStorageOperation(operation.id, "pending", now);
+    await filesBucket().put(objectKey, fileBytes, {
+      httpMetadata: { contentType: file.type },
+    });
+    await transitionDocumentStorageOperation(
+      operation.id,
+      "metadata_pending",
+      new Date().toISOString(),
+    );
+    let [document] = await getDb()
+      .select()
+      .from(documents)
+      .where(eq(documents.id, id))
+      .limit(1);
+    if (!document) {
+      [document] = await getDb()
+        .insert(documents)
+        .values({
+          id,
+          recordId,
+          name,
+          objectKey,
+          contentType: file.type,
+          size: file.size,
+          createdBy: auth.user.email,
+          createdAt: operationMetadata?.createdAt ?? now,
+        })
+        .returning();
+    }
+    await Promise.all([
+      writeAudit(auth.user.email, "upload", "document", id, document.name),
+      upsertSearchDocument({
+        entityType: "document",
+        entityId: id,
+        title: document.name,
+        subtitle: document.contentType,
+        searchText: document.name,
+        ownerEmail: document.createdBy,
+        updatedAt: document.createdAt,
+      }),
+    ]);
+    await transitionDocumentStorageOperation(
+      operation.id,
+      "completed",
+      new Date().toISOString(),
+    );
+    return Response.json(
+      { document, operationId: operation.id, replay: Boolean(existing) },
+      { status: existing ? 200 : 201 },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await transitionDocumentStorageOperation(
+      operation.id,
+      "reconcile_required",
+      new Date().toISOString(),
+      message,
+    ).catch(() => undefined);
+    return Response.json(
+      {
+        error: "La carga quedó pendiente de reconciliación; puedes reintentar con la misma clave.",
+        operationId: operation.id,
+        retryable: true,
+      },
+      { status: 202 },
+    );
+  }
 }
