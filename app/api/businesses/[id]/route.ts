@@ -17,27 +17,41 @@ import {
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function GET(_: Request, context: RouteContext) {
+  const startedAt = performance.now();
   const auth = await authorizeApi({ module: "clientes", action: "view" });
   if (!auth.ok) return auth.response;
   const { id } = await context.params;
   const db = getDb();
+  const queryDurations: number[] = [];
+  const businessQueryStartedAt = performance.now();
   const [business] = await db
     .select()
     .from(businesses)
     .where(and(eq(businesses.id, id), isNull(businesses.archivedAt)))
     .limit(1);
+  queryDurations.push(performance.now() - businessQueryStartedAt);
   if (!business) {
     return Response.json({ error: "Business no encontrado." }, { status: 404 });
   }
-  const query = async (sqlText: string) =>
-    (await getD1().prepare(sqlText).bind(id).all<Record<string, unknown>>())
-      .results ?? [];
-  const queryMany = async (sqlText: string, ...bindings: string[]) =>
-    (await getD1().prepare(sqlText).bind(...bindings).all<Record<string, unknown>>())
-      .results ?? [];
-  const queryTwice = async (sqlText: string) =>
-    (await getD1().prepare(sqlText).bind(id, id).all<Record<string, unknown>>())
-      .results ?? [];
+  const query = async (sqlText: string) => {
+    const queryStartedAt = performance.now();
+    const result = await getD1().prepare(sqlText).bind(id).all<Record<string, unknown>>();
+    queryDurations.push(performance.now() - queryStartedAt);
+    return result.results ?? [];
+  };
+  const queryMany = async (sqlText: string, ...bindings: string[]) => {
+    const queryStartedAt = performance.now();
+    const result = await getD1().prepare(sqlText).bind(...bindings).all<Record<string, unknown>>();
+    queryDurations.push(performance.now() - queryStartedAt);
+    return result.results ?? [];
+  };
+  const queryTwice = async (sqlText: string) => {
+    const queryStartedAt = performance.now();
+    const result = await getD1().prepare(sqlText).bind(id, id).all<Record<string, unknown>>();
+    queryDurations.push(performance.now() - queryStartedAt);
+    return result.results ?? [];
+  };
+  const relatedStartedAt = performance.now();
   const [
     relatedContacts,
     projects,
@@ -124,26 +138,37 @@ export async function GET(_: Request, context: RouteContext) {
          )
       ORDER BY created_at DESC LIMIT 250`),
   ]);
+  const relatedDuration = performance.now() - relatedStartedAt;
   const mergedDocuments = [...documents, ...sourceDocuments].filter((item, index, all) => {
     const key = String(item.id ?? item.originalUri ?? `${item.name}:${item.linkedAt}`);
     return all.findIndex((candidate) => String(candidate.id ?? candidate.originalUri ?? `${candidate.name}:${candidate.linkedAt}`) === key) === index;
   });
-  return Response.json(
-    {
-      business,
-      contacts: relatedContacts,
-      projects,
-      opportunities: relatedOpportunities,
-      quotations,
-      invoices,
-      payments,
-      addresses,
-      documents: mergedDocuments,
-      cases,
-      history,
+  const responseBody = {
+    business,
+    contacts: relatedContacts,
+    projects,
+    opportunities: relatedOpportunities,
+    quotations,
+    invoices,
+    payments,
+    addresses,
+    documents: mergedDocuments,
+    cases,
+    history,
+  };
+  const totalDuration = performance.now() - startedAt;
+  const payloadBytes = new TextEncoder().encode(JSON.stringify(responseBody)).byteLength;
+  return Response.json(responseBody, {
+    headers: {
+      "cache-control": "private, no-store",
+      "server-timing": [
+        `db;dur=${queryDurations.reduce((total, duration) => total + duration, 0).toFixed(1)}`,
+        `related;dur=${relatedDuration.toFixed(1)}`,
+        `total;dur=${totalDuration.toFixed(1)}`,
+      ].join(", "),
+      "x-hidaca-payload-bytes": String(payloadBytes),
     },
-    { headers: { "cache-control": "private, no-store" } },
-  );
+  });
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
