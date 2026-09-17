@@ -45,6 +45,23 @@ test("write leases are visible, fenced, and released", async () => {
   }
 });
 
+test("failed writers are marked failed and do not block a later drain", async () => {
+  const { binding, sqlite } = database();
+  try {
+    await assert.rejects(
+      () => withWriteLease(binding, "api:failed", async () => {
+        throw new Error("synthetic writer failure");
+      }, "request-failed"),
+      /synthetic writer failure/,
+    );
+    assert.equal((await getMaintenanceStatus(binding)).activeWriterCount, 0);
+    const row = sqlite.prepare("SELECT outcome FROM write_leases WHERE request_id = ?").get("request-failed") as { outcome?: string } | undefined;
+    assert.equal(row?.outcome, "failed");
+  } finally {
+    sqlite.close();
+  }
+});
+
 test("entering maintenance drains old-generation writers and fences new ones", async () => {
   const { binding, sqlite } = database();
   try {
