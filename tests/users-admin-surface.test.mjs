@@ -27,3 +27,11 @@ test("authorized-user UI exposes permission editing and confirmed deletion", () 
   assert.match(users, /Solo lectura/);
   assert.match(users, /Quitar todos/);
 });
+
+test("authorized-user editor exposes stable browser metadata for in-scope fields", () => {
+  assert.match(users, /autoComplete="name"[\s\S]*id="user-editor-name"[\s\S]*name="name"/);
+  assert.match(users, /autoComplete="email"[\s\S]*id="user-editor-email"[\s\S]*name="email"/);
+  assert.match(users, /id="user-editor-role"[\s\S]*name="role"/);
+  assert.match(users, /id="user-editor-status"[\s\S]*name="status"/);
+  assert.match(users, /aria-label="Buscar módulos"[\s\S]*autoComplete="off"[\s\S]*name="permissionSearch"/);
+});
