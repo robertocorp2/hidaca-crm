@@ -44,4 +44,10 @@ test("authorized-user tabs expose stable keyboard and panel relationships", () =
   assert.match(users, /event\.key === "Home"/);
   assert.match(users, /event\.key === "End"/);
   assert.match(users, /tabButtons\.current\[nextTab\]\?\.focus\(\)/);
+  assert.match(users, /aria-selected=\{tab === "general"\}/);
+  assert.match(users, /aria-selected=\{tab === "permissions"\}/);
+  assert.match(users, /tabIndex=\{tab === "general" \? 0 : -1\}/);
+  assert.match(users, /tabIndex=\{tab === "permissions" \? 0 : -1\}/);
+  assert.match(users, /type="button">General/);
+  assert.match(users, /type="button">Permisos/);
 });
