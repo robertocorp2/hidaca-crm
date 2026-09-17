@@ -115,10 +115,11 @@ function buttonClasses(
 export function Button({
   className,
   size = "md",
+  type = "button",
   variant = "primary",
   ...props
 }: ButtonProps) {
-  return <button className={buttonClasses(variant, size, className)} {...props} />;
+  return <button className={buttonClasses(variant, size, className)} type={type} {...props} />;
 }
 
 type IconButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -127,13 +128,14 @@ type IconButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 /** Canonical icon-only control; an accessible label is required by the API. */
-export function IconButton({ className, label, size = "md", ...props }: IconButtonProps) {
+export function IconButton({ className, label, size = "md", type = "button", ...props }: IconButtonProps) {
   return (
     <button
       aria-label={label}
       className={["icon-button", size === "sm" ? "button-size-sm" : size === "lg" ? "button-size-lg" : "", className]
         .filter(Boolean)
         .join(" ")}
+      type={type}
       {...props}
     />
   );
