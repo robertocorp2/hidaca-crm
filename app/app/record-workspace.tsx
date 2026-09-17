@@ -723,13 +723,27 @@ export function RecordWorkspace({
   const visibleError = loadedRecordId === record.id ? error : "";
   const responseBusiness = visibleData && "business" in visibleData && visibleData.business ? visibleData.business : null;
   const summaryLabel = "Acerca de";
+  const timingName = `hidaca:record-workspace:${kind}`;
 
   useEffect(() => {
     const controller = new AbortController();
+    performance.clearMarks(`${timingName}:request-start`);
+    performance.clearMarks(`${timingName}:data-ready`);
+    performance.clearMarks(`${timingName}:rendered`);
+    performance.clearMeasures(`${timingName}:request`);
+    performance.clearMeasures(`${timingName}:render`);
+    performance.mark(`${timingName}:request-start`);
     void fetch(`/api/${endpoint}/${encodeURIComponent(record.id)}`, { signal: controller.signal })
       .then(async (response) => {
         const result = (await response.json()) as { error?: string };
         if (!response.ok) throw new Error(result.error ?? "No se pudieron cargar las relaciones.");
+        performance.mark(`${timingName}:data-ready`, {
+          detail: {
+            payloadBytes: response.headers.get("x-hidaca-payload-bytes"),
+            serverTiming: response.headers.get("server-timing"),
+          },
+        });
+        performance.measure(`${timingName}:request`, `${timingName}:request-start`, `${timingName}:data-ready`);
         setData(result as BusinessDetailResponse | ContactDetailResponse);
         setError("");
         setLoadedRecordId(record.id);
@@ -741,7 +755,13 @@ export function RecordWorkspace({
         }
       });
     return () => controller.abort();
-  }, [endpoint, record.id]);
+  }, [endpoint, record.id, timingName]);
+
+  useEffect(() => {
+    if (!visibleData) return;
+    performance.mark(`${timingName}:rendered`);
+    performance.measure(`${timingName}:render`, `${timingName}:data-ready`, `${timingName}:rendered`);
+  }, [timingName, visibleData]);
 
   const timeline = useMemo(
     () => (visibleData ? makeTimeline(kind, record, activities, visibleData) : []),
