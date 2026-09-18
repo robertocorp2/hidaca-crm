@@ -5,12 +5,15 @@ import test from "node:test";
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("shared button primitives expose the canonical variant and size contract", async () => {
-  const [ui, css, docs, workspace, showcase] = await Promise.all([
+  const [ui, css, docs, workspace, showcase, entities, projects, operations] = await Promise.all([
     read("../app/app/ui.tsx"),
     read("../app/globals.css"),
     read("../docs/BUTTONS.md"),
     read("../app/app/record-workspace.tsx"),
     read("../app/app/design-system-showcase.tsx"),
+    read("../app/app/entity-views.tsx"),
+    read("../app/app/projects-view.tsx"),
+    read("../app/app/operations-client.tsx"),
   ]);
 
   assert.match(ui, /export function Button/);
@@ -27,4 +30,9 @@ test("shared button primitives expose the canonical variant and size contract", 
   assert.match(docs, /\| Overflow \|/);
   assert.match(workspace, /<Button onClick=\{onEdit\} size="sm">/);
   assert.match(showcase, /<IconButton className="ds-icon-button" label="Abrir menú"/);
+  assert.match(entities, /<Button[\s\S]*variant="primary"/);
+  assert.match(entities, /<Button variant="text" onClick=\{clearBusinessFilters\}/);
+  assert.match(projects, /<Button variant="primary"/);
+  assert.match(operations, /<Button variant="primary" onClick=\{openCreate\}/);
+  assert.match(operations, /<Button[\s\S]*variant="danger"/);
 });

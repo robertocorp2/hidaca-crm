@@ -67,6 +67,7 @@ import type {
 } from "./types";
 import {
   ActiveFilterChip,
+  Button,
   Empty,
   AppearancePreferences,
   AutocompleteInput,
@@ -821,16 +822,16 @@ export function OperationsClient({
           >
             <p>{confirmation.message}</p>
             <div className="confirm-actions">
-              <button
-                className="secondary-button"
+              <Button
+                variant="secondary"
                 disabled={busy}
                 onClick={() => setConfirmation(null)}
                 type="button"
               >
                 Cancelar
-              </button>
-              <button
-                className="danger-button"
+              </Button>
+              <Button
+                variant="danger"
                 disabled={busy}
                 onClick={async () => {
                   setBusy(true);
@@ -841,7 +842,7 @@ export function OperationsClient({
                 type="button"
               >
                 {busy ? "Procesando…" : confirmation.confirmLabel}
-              </button>
+              </Button>
             </div>
           </Modal>
         )}
@@ -1448,9 +1449,9 @@ export function OperationsClient({
                 <PageHeader
                   action={
                     canWrite ? (
-                      <button className="primary-button" onClick={openCreate}>
+                      <Button variant="primary" onClick={openCreate}>
                         Nuevo registro
-                      </button>
+                      </Button>
                     ) : undefined
                   }
                   description="Consulta, registra y actualiza información."
@@ -1525,8 +1526,8 @@ export function OperationsClient({
                       />
                     ))}
                     {activeGenericFilters.length > 1 && (
-                      <button
-                        className="text-button"
+                      <Button
+                        variant="text"
                         onClick={() => {
                           clearGenericFilters();
                           setGenericPage("1");
@@ -1534,7 +1535,7 @@ export function OperationsClient({
                         type="button"
                       >
                         Limpiar filtros
-                      </button>
+                      </Button>
                     )}
                   </div>
                 )}
@@ -2213,9 +2214,9 @@ function DocumentsView({
               ))}
             </select>
           </label>
-          <button className="primary-button" disabled={busy}>
+          <Button variant="primary" disabled={busy}>
             Cargar
-          </button>
+          </Button>
           <small>PDF, imagen, DOCX o XLSX. Máximo 10 MB.</small>
         </form>
       )}
@@ -2277,12 +2278,13 @@ function DocumentsView({
                 </div>
                 <a href={`/api/documents/${document.id}`}>Descargar</a>
                 {canWrite && (
-                  <button
+                  <Button
+                    variant="danger"
                     className="danger-link"
                     onClick={() => onDelete(document)}
                   >
                     Eliminar
-                  </button>
+                  </Button>
                 )}
               </article>
             ))
@@ -2517,20 +2519,21 @@ function RecordsTable({
                         title={record.title}
                       />
                     )}
-                    <button
-                      className="text-button"
+                    <Button
+                      variant="text"
                       hidden={!canWrite}
                       onClick={() => onEdit(record)}
                     >
                       Editar
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="danger"
                       className="danger-link"
                       hidden={!canWrite}
                       onClick={() => onArchive(record)}
                     >
                       Archivar
-                    </button>
+                    </Button>
                   </td>
                 )}
               </tr>
@@ -2646,16 +2649,16 @@ function RecordForm({
         </label>
       </div>
       <div className="form-actions">
-        <button
-          className="secondary-button"
+        <Button
+          variant="secondary"
           onClick={requestCancel}
           type="button"
         >
           Cancelar
-        </button>
-        <button className="primary-button" disabled={busy}>
+        </Button>
+        <Button variant="primary" disabled={busy}>
           {busy ? "Guardando…" : "Guardar"}
-        </button>
+        </Button>
       </div>
     </form>
   );
