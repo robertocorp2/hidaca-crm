@@ -45,6 +45,7 @@ test("shared button primitives expose the canonical variant and size contract", 
   assert.match(workspace, /<Button[\s\S]*className="record-more-button"/);
   assert.match(workspace, /<Button[\s\S]*className="danger-menu-item"/);
   assert.match(workspace, /<Button[\s\S]*relationship-empty-action/);
+  assert.match(workspace, /<Button className="timeline-link"[\s\S]*variant="text"/);
   assert.match(operations, /<Button[\s\S]*variant="danger"/);
   assert.doesNotMatch(dailyBrief, /<button[\s\S]{0,120}className="(?:primary|secondary|danger|text)-button/);
   assert.match(dailyBrief, /<Button[\s\S]*variant="secondary"[\s\S]*Actualizar/);

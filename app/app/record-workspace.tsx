@@ -478,9 +478,9 @@ export function ActivityTimeline({ events, onOpenActivity }: { events: TimelineE
               <time dateTime={event.date}>{dateTime(event.date, true)}</time>
             </div>
             {event.activityId ? (
-              <button className="timeline-link" onClick={() => onOpenActivity(event.activityId!)} type="button">
+              <Button className="timeline-link" onClick={() => onOpenActivity(event.activityId!)} type="button" variant="text">
                 {event.title}
-              </button>
+              </Button>
             ) : (
               <strong>{event.title}</strong>
             )}
