@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   permissionModules,
   rolePermissionDefaults,
@@ -193,6 +193,27 @@ export function UsersAdminView({
   }).toSorted((left, right) => left.name.localeCompare(right.name, "es")), [listQuery, roleFilter, statusFilter, users]);
   const pageSize = pageSizeValue === "all" ? Math.max(filteredUsers.length, 1) : Number(pageSizeValue) || 10;
   const { page, pageItems, setPage, totalPages } = usePagination(filteredUsers, pageSize);
+  const tabOrder: Array<"general" | "permissions"> = access.administer ? ["general", "permissions"] : ["general"];
+  const tabIds = { general: "users-tab-general", permissions: "users-tab-permissions" } as const;
+  const panelIds = { general: "users-panel-general", permissions: "users-panel-permissions" } as const;
+
+  function handleTabKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, currentTab: "general" | "permissions") {
+    const currentIndex = tabOrder.indexOf(currentTab);
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") nextIndex = (currentIndex + 1) % tabOrder.length;
+    if (event.key === "ArrowLeft" || event.key === "ArrowUp") nextIndex = (currentIndex - 1 + tabOrder.length) % tabOrder.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = tabOrder.length - 1;
+    if (nextIndex !== null) {
+      event.preventDefault();
+      document.getElementById(tabIds[tabOrder[nextIndex]])?.focus();
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      setTab(currentTab);
+    }
+  }
 
   return <>
     <Breadcrumbs items={[{ label: "Inicio" }, { label: "Usuarios" }]} />
@@ -218,8 +239,11 @@ export function UsersAdminView({
     </div><Pagination onPageChange={setPage} page={page} totalPages={totalPages} /></section>
     {editor && <Modal eyebrow={editor.user ? "Seguridad" : "Nueva autorización"} onClose={() => setEditor(null)} title={editor.user ? editor.user.name : "Autorizar usuario"} wide>
       <form className="user-editor" onSubmit={save}>
-        <div className="user-tabs" role="tablist"><button aria-selected={tab === "general"} onClick={() => setTab("general")} role="tab" type="button">General</button>{access.administer && <button aria-selected={tab === "permissions"} onClick={() => setTab("permissions")} role="tab" type="button">Permisos</button>}</div>
-        {tab === "general" ? <div className="user-general-grid">
+        <div aria-label="Editor de usuario" className="user-tabs" role="tablist">
+          <button aria-controls={panelIds.general} aria-selected={tab === "general"} id={tabIds.general} onClick={() => setTab("general")} onKeyDown={(event) => handleTabKeyDown(event, "general")} role="tab" tabIndex={tab === "general" ? 0 : -1} type="button">General</button>
+          {access.administer && <button aria-controls={panelIds.permissions} aria-selected={tab === "permissions"} id={tabIds.permissions} onClick={() => setTab("permissions")} onKeyDown={(event) => handleTabKeyDown(event, "permissions")} role="tab" tabIndex={tab === "permissions" ? 0 : -1} type="button">Permisos</button>}
+        </div>
+        <div aria-labelledby={tabIds.general} className="user-general-grid" hidden={tab !== "general"} id={panelIds.general} role="tabpanel" tabIndex={0}>
           <label htmlFor="user-editor-name">Nombre<input autoComplete="name" disabled={self || !access.edit} id="user-editor-name" name="name" required value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} /></label>
           <label htmlFor="user-editor-email">Correo de ChatGPT<input autoComplete="email" disabled={self || !access.edit} id="user-editor-email" name="email" required type="email" value={editor.email} onChange={(event) => setEditor({ ...editor, email: event.target.value })} /></label>
           <label htmlFor="user-editor-role">Rol<select autoComplete="off" disabled={self || !access.edit} id="user-editor-role" name="role" value={editor.role} onChange={(event) => { const role = event.target.value as StaffRole; const defaults = editor.roleDefaults[role]; setEditor({ ...editor, role, defaults, permissions: effectivePreview(role, defaults, editor.overrides) }); }}><option value="admin">Administrador</option><option value="operator">Operador</option><option value="viewer">Solo lectura</option></select></label>
@@ -231,7 +255,8 @@ export function UsersAdminView({
           }}><option value="active">Activo</option><option value="inactive">Inactivo</option></select></label>
           {editor.user && <div className="user-dates"><span>Creado: {dateTime(editor.user.createdAt)}</span><span>Última actualización: {dateTime(editor.user.updatedAt)}</span></div>}
           {self && <p className="inline-warning">Tu propia seguridad está protegida: no puedes cambiar correo, rol, estado, permisos ni eliminar tu acceso.</p>}
-        </div> : <div className="permission-editor">
+        </div>
+        {access.administer && <div aria-labelledby={tabIds.permissions} className="permission-editor" hidden={tab !== "permissions"} id={panelIds.permissions} role="tabpanel" tabIndex={0}>
           <div className="permission-tools"><input aria-label="Buscar módulos" autoComplete="off" name="permissionSearch" onChange={(event) => setQuery(event.target.value)} placeholder="Buscar módulos…" value={query} /><div><button onClick={() => applyPreset("reset")} type="button">Restablecer rol</button><button onClick={() => applyPreset("all")} type="button">Permitir todos</button><button onClick={() => applyPreset("readonly")} type="button">Solo lectura</button><button onClick={() => applyPreset("none")} type="button">Quitar todos</button></div></div>
           <div className="permission-groups">{filteredModules.map((module) => {
             const requiredBy = permissionModules.filter((item) => item.dependencies.includes(module.key as never) && editor.permissions[item.key].view).map((item) => item.label);
