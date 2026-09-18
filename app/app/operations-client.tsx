@@ -69,6 +69,7 @@ import {
   ActiveFilterChip,
   Button,
   Empty,
+  IconButton,
   AppearancePreferences,
   AutocompleteInput,
   ColumnFilterPopover,
@@ -903,9 +904,8 @@ export function OperationsClient({
         >
           <header className="topbar">
             <div className="topbar-leading">
-              <button
-                aria-expanded={mobileNav}
-                aria-label={
+              <IconButton
+                label={
                   mobileNav
                     ? "Cerrar navegación"
                     : drawerNavigation
@@ -923,10 +923,11 @@ export function OperationsClient({
                   }
                 }}
                 ref={menuButtonRef}
+                size="md"
                 type="button"
               >
                 <span aria-hidden="true">☰</span>
-              </button>
+              </IconButton>
               <DashboardLink
                 className="topbar-brand"
                 href={viewHref("resumen")}
@@ -954,25 +955,26 @@ export function OperationsClient({
                 }}
               />
             </div>
-            <button
-              aria-expanded={mobileSearchOpen}
-              aria-label={
+            <IconButton
+              label={
                 mobileSearchOpen ? "Cerrar búsqueda" : "Abrir búsqueda global"
               }
               className="mobile-search-button"
               onClick={() => setMobileSearchOpen((value) => !value)}
+              size="md"
               type="button"
             >
               <span aria-hidden="true">⌕</span>
-            </button>
+            </IconButton>
             <div className="profile-menu" ref={profileRef}>
-              <button
+              <Button
                 aria-expanded={profileOpen}
                 aria-haspopup="menu"
                 aria-label={`Perfil de ${currentUser.displayName}`}
                 className="profile-trigger"
                 onClick={() => setProfileOpen((value) => !value)}
                 type="button"
+                variant="ghost"
               >
                 <span className="profile-avatar" aria-hidden="true">
                   {currentUser.displayName.trim().charAt(0).toUpperCase() ||
@@ -985,23 +987,25 @@ export function OperationsClient({
                 <span className="profile-chevron" aria-hidden="true">
                   ▾
                 </span>
-              </button>
+              </Button>
               {profileOpen && (
                 <div className="profile-dropdown" role="menu">
                   <div>
                     <strong>{currentUser.displayName}</strong>
                     <small>{roleLabel(currentUser.role)}</small>
                   </div>
-                  <button
+                  <Button
+                    className="profile-dropdown-action"
                     onClick={() => {
                       setAppearanceOpen(true);
                       setProfileOpen(false);
                     }}
                     role="menuitem"
                     type="button"
+                    variant="text"
                   >
                     Preferencias de apariencia
-                  </button>
+                  </Button>
                   <a href={signOutHref} role="menuitem">
                     Cerrar sesión
                   </a>

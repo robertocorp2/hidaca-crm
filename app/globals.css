@@ -7922,6 +7922,10 @@ textarea:focus-visible {
 .icon-button:hover {
   background: var(--green-100);
 }
+.menu-button,
+.mobile-search-button {
+  background: transparent;
+}
 .ds-badge-stack {
   align-items: start;
   display: flex;

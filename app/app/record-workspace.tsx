@@ -282,20 +282,22 @@ export function RecordActions({
       ) : null}
       {canWrite && (
         <div className="record-action-menu">
-          <button
+          <Button
             aria-expanded={open}
             aria-haspopup="menu"
-            className="ghost-button button-size-sm"
+            className="record-more-button"
             onClick={() => setOpen((current) => !current)}
+            size="sm"
             type="button"
+            variant="ghost"
           >
             Más <MoreHorizontal aria-hidden="true" size={15} />
-          </button>
+          </Button>
           {open && (
             <div className="record-action-menu-popover" role="menu">
-              <button className="danger-menu-item" onClick={() => { setOpen(false); onArchive(); }} role="menuitem" type="button">
+              <Button className="danger-menu-item" onClick={() => { setOpen(false); onArchive(); }} role="menuitem" size="sm" type="button" variant="text">
                 <Archive aria-hidden="true" size={14} />Eliminar / archivar
-              </button>
+              </Button>
             </div>
           )}
         </div>
@@ -452,10 +454,10 @@ function RelationshipEmptyState({
       <strong>{config.emptyTitle}</strong>
       <p>{config.emptyDescription}</p>
       {canWrite && config.createLabel && onCreate && (
-        <button className="primary-button relationship-empty-action" onClick={onCreate} type="button">
+        <Button className="relationship-empty-action" onClick={onCreate} type="button" variant="primary">
           <Plus aria-hidden="true" size={15} />
           {config.createLabel}
-        </button>
+        </Button>
       )}
     </div>
   );
