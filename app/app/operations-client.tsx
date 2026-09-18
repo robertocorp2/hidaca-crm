@@ -1692,12 +1692,12 @@ function MobileBottomNav({
           </a>
         );
       })}
-      <button aria-label="Más módulos" onClick={onMore} type="button">
+      <Button aria-label="Más módulos" onClick={onMore} type="button" variant="text">
         <span aria-hidden="true" className="mobile-bottom-more-icon">
           ⋯
         </span>
         <span>Más</span>
-      </button>
+      </Button>
     </nav>
   );
 }

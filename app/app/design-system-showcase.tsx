@@ -505,10 +505,10 @@ export function DesignSystemShowcase() {
                       onClear={() => setActiveFilter(false)}
                     />
                   )}
-                  <button className="secondary-button" type="button">
+                  <Button type="button" variant="secondary">
                     <SlidersHorizontal aria-hidden="true" size={15} />
                     Filtros
-                  </button>
+                  </Button>
                 </div>
                 <AutocompleteInput
                   ariaLabel="Buscar empresa"
@@ -539,10 +539,10 @@ export function DesignSystemShowcase() {
               </div>
               <Empty
                 action={
-                  <button className="primary-button" type="button">
+                  <Button type="button">
                     <Plus aria-hidden="true" size={15} />
                     Crear registro
-                  </button>
+                  </Button>
                 }
                 text="Crea el primer registro para empezar a organizar este espacio."
               />
@@ -563,9 +563,9 @@ export function DesignSystemShowcase() {
               </div>
               <ErrorState
                 action={
-                  <button className="secondary-button" type="button">
+                  <Button type="button" variant="secondary">
                     Intentar de nuevo
-                  </button>
+                  </Button>
                 }
                 message="No se pudo cargar la información de ejemplo."
               />
@@ -645,9 +645,9 @@ export function DesignSystemShowcase() {
                       </td>
                       <td className="number-column">{total}</td>
                       <td>
-                        <button className="text-button" type="button">
+                        <Button type="button" variant="text">
                           Ver
-                        </button>
+                        </Button>
                       </td>
                     </tr>
                   ))}
@@ -714,16 +714,13 @@ export function DesignSystemShowcase() {
                 </div>
               </div>
               <div className="record-actions">
-                <button className="primary-button compact-action" type="button">
+                <Button size="sm" type="button">
                   <Plus aria-hidden="true" size={15} />
                   Actividad
-                </button>
-                <button
-                  className="secondary-button compact-action"
-                  type="button"
-                >
+                </Button>
+                <Button size="sm" type="button" variant="secondary">
                   Editar
-                </button>
+                </Button>
               </div>
               <details className="record-about" open>
                 <summary>Acerca de esta empresa</summary>
@@ -857,29 +854,28 @@ export function DesignSystemShowcase() {
                   </p>
                 </div>
                 <div className="form-actions">
-                  <button
-                    className="secondary-button"
+                  <Button
                     onClick={() => setModalOpen(false)}
                     type="button"
+                    variant="secondary"
                   >
                     Cancelar
-                  </button>
-                  <button
-                    className="danger-button"
+                  </Button>
+                  <Button
                     onClick={() => setModalOpen(false)}
                     type="button"
+                    variant="danger"
                   >
                     Archivar
-                  </button>
+                  </Button>
                 </div>
               </div>
-              <button
-                className="primary-button"
+              <Button
                 onClick={() => setModalOpen(true)}
                 type="button"
               >
                 Abrir modal real
-              </button>
+              </Button>
             </div>
             <div className="ds-card ds-nav-preview">
               <div className="ds-card-label">
@@ -946,20 +942,20 @@ export function DesignSystemShowcase() {
             conserva.
           </p>
           <div className="form-actions">
-            <button
-              className="secondary-button"
+            <Button
               onClick={() => setModalOpen(false)}
               type="button"
+              variant="secondary"
             >
               Cancelar
-            </button>
-            <button
-              className="danger-button"
+            </Button>
+            <Button
               onClick={() => setModalOpen(false)}
               type="button"
+              variant="danger"
             >
               Archivar registro
-            </button>
+            </Button>
           </div>
         </Modal>
       )}

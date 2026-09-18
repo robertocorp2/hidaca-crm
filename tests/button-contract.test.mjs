@@ -30,12 +30,16 @@ test("shared button primitives expose the canonical variant and size contract", 
   assert.match(docs, /\| Overflow \|/);
   assert.match(workspace, /<Button onClick=\{onEdit\} size="sm">/);
   assert.match(showcase, /<IconButton className="ds-icon-button" label="Abrir menú"/);
+  assert.doesNotMatch(showcase, /<button[\s\S]{0,120}className="(?:primary|secondary|danger|text)-button/);
+  assert.match(showcase, /<Button[\s\S]*variant="secondary"[\s\S]*Filtros/);
+  assert.match(showcase, /<Button size="sm" type="button" variant="secondary">[\s\S]*Editar/);
   assert.match(entities, /<Button[\s\S]*variant="primary"/);
   assert.match(entities, /<Button variant="text" onClick=\{clearBusinessFilters\}/);
   assert.match(projects, /<Button variant="primary"/);
   assert.match(operations, /<Button variant="primary" onClick=\{openCreate\}/);
   assert.match(operations, /<IconButton[\s\S]*className="menu-button"/);
   assert.match(operations, /<IconButton[\s\S]*className="mobile-search-button"/);
+  assert.match(operations, /<Button aria-label="Más módulos"[\s\S]*variant="text"/);
   assert.match(operations, /<Button[\s\S]*className="profile-trigger"/);
   assert.match(workspace, /<Button[\s\S]*className="record-more-button"/);
   assert.match(workspace, /<Button[\s\S]*className="danger-menu-item"/);
