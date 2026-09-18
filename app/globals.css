@@ -4986,15 +4986,6 @@ textarea:focus-visible {
   background: #edf4f0;
   border-color: var(--line);
 }
-.compact-action {
-  /* Legacy alias retained for existing record actions; new code should use
-     Button size="sm" / .button-size-sm. */
-  border-radius: var(--radius-sm) !important;
-  font-size: 0.76rem !important;
-  gap: var(--space-1);
-  min-height: 34px !important;
-  padding: 6px 10px !important;
-}
 .record-action-menu {
   position: relative;
 }
