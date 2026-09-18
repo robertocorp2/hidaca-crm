@@ -31,18 +31,61 @@ Redeploy the previously known-good Sites version. This immediately restores
 the prior application code and assets. The additive CRM tables can safely
 remain because the previous release does not query them.
 
+## Write barrier and maintenance mode
+
+Database rollback must use the D1-backed write barrier, not a code redeploy as
+the stop mechanism. The `maintenance_state` singleton is authoritative and
+the `write_leases` table records every active writer. The Sites Worker acquires
+a lease for every `POST`, `PUT`, `PATCH`, and `DELETE`, including `/v1` routes
+and the WhatsApp webhook. The independent ECF gateway and prospecting cron
+worker acquire leases separately. A lease generation is invalid after the
+barrier advances, so stale writers cannot renew or continue a fenced operation.
+
+Authenticated administrators use these endpoints:
+
+- `GET /api/maintenance` — verify mode, generation, active writer count, and
+  writer identities.
+- `POST /api/maintenance/enter` with `{"reason":"rollback","timeoutMs":30000}`
+  — advance the generation, reject new writes, and wait for existing leases.
+- `POST /api/maintenance/reopen` — advance the generation and reopen writes
+  only after restore and reconciliation succeed.
+
+The enter operation returns `409 MAINTENANCE_DRAIN_TIMEOUT` if active or
+unresolved leases remain at the deadline. An expired lease is not proof that
+its writer stopped: leave the system in maintenance mode, inspect the reported
+writer IDs and logs, and abort the restore until the writer finishes or the
+external client is stopped. Resolve an abandoned lease only after verifying
+that its request is no longer running. New mutations receive
+`503 MAINTENANCE_MODE` with `Retry-After: 60`.
+
 ## Database rollback
 
 Database restore is required only if new CRM writes must also be removed or
 the additive migration itself caused a verified data issue.
 
-1. Stop CRM writes by redeploying the previous Sites version.
-2. Confirm the intended pre-deployment UTC timestamp or saved bookmark.
+1. Confirm the intended pre-deployment UTC timestamp or saved bookmark.
+2. Enter maintenance mode and poll `GET /api/maintenance` until
+   `activeWriterCount` is zero. A timeout or unknown writer is an abort.
 3. Run `npx wrangler d1 time-travel info DB --timestamp=<RFC3339>` and record
    the returned bookmark.
-4. Run `npx wrangler d1 time-travel restore DB --bookmark=<BOOKMARK>`.
-5. Verify the two pre-existing legacy records and the active staff allowlist.
-6. Smoke-test the previous Sites version.
+4. Keep the barrier closed while taking the final D1/R2 reconciliation snapshot.
+5. Run `npx wrangler d1 time-travel restore DB --bookmark=<BOOKMARK>`.
+6. Run the reconciliation endpoint with the exact restore timestamp:
+   `GET /api/maintenance/reconciliation?snapshotAt=<RFC3339>`.
+7. Abort reopening if the inventory is incomplete, a D1 reference is missing
+   in R2, an unexpected R2 object is orphaned, or post-snapshot rows/audit
+   entries are present. Investigate and correct the evidence before traffic.
+8. Verify the two pre-existing legacy records and the active staff allowlist.
+9. Smoke-test the previous Sites version, then reopen writes only after all
+   checks are clean.
+
+The reconciliation report checks D1 references from documents, imports,
+e-CF artifacts, voice recordings, and WhatsApp media against a paginated R2
+inventory. It reports missing referenced objects, unexpected non-backup
+objects, and post-snapshot samples from each blob-backed table plus `audit_log`.
+Backup objects under `backups/` remain explicit rollback evidence and are not
+classified as orphaned by this check. An incomplete R2 listing is always an
+abort condition.
 
 Time Travel restore is destructive to writes made after the selected point.
 It therefore requires explicit production approval and a verified timestamp.
@@ -50,6 +93,32 @@ R2 files are independent of D1. AI source audio is stored under `voice/` and
 has a retention deadline; disabling AI or rolling back application code does
 not delete that evidence. Remove expired audio only through a separately
 approved retention job.
+
+## Staging drill
+
+Before a production restore, use a staging D1/R2 pair and the same deployed
+worker topology. Start a deliberately slow authenticated mutation, a signed
+WhatsApp webhook, one ECF receive request, a prospecting cron invocation, and
+one blob upload concurrently. Capture the request IDs from `GET /api/maintenance`,
+enter maintenance mode, and verify that the active leases drain, new mutations
+return `503` with `Retry-After`, and no blob operation starts after the barrier
+generation changes. Run the reconciliation endpoint against the drill
+snapshot, verify zero unexpected findings, reopen traffic, and repeat one
+authenticated read/write smoke check. Record the tested commit, migration,
+generation, timestamps, drain result, reconciliation JSON, and abort decisions.
+
+The repository includes a credential-free control-plane harness for this drill:
+`node scripts/rollback-staging-drill.mjs`. It sends the ChatGPT-authenticated
+operator headers from `HIDACA_STAGING_AUTH_EMAIL` (and the optional
+`HIDACA_STAGING_AUTH_FULL_NAME`), enters maintenance, polls for a zero-writer
+state, runs reconciliation with the operator-supplied `--snapshot-at` timestamp,
+and reopens traffic only when every reconciliation check is clean. It writes the
+evidence JSON to stdout, or to `--output <path>` when requested. The command
+requires `--base-url` (or `HIDACA_STAGING_URL`), a valid RFC3339
+`--snapshot-at`, and rejects the production hostname. Start the five writer
+probes described above before invoking it; the harness does not invent payloads
+or signatures for those external integrations. Any drain, request, or
+reconciliation failure leaves the barrier closed for operator investigation.
 
 If an explicitly approved structural rollback is required instead of Time
 Travel, validate the down scripts on a copy first and run them newest-first:

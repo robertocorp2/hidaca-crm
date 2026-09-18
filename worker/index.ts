@@ -1,6 +1,13 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import {
+  MaintenanceModeError,
+  WRITE_LEASE_GENERATION_HEADER,
+  WRITE_LEASE_ID_HEADER,
+  maintenanceResponse,
+  withWriteLease,
+} from "../app/lib/write-barrier";
 
 interface Env {
   ASSETS: Fetcher;
@@ -40,8 +47,36 @@ const worker = {
       }, allowedWidths);
     }
 
-    return handler.fetch(request, env, ctx);
+    if (!isMutation(request.method) || isMaintenanceEndpoint(url.pathname)) {
+      return handler.fetch(request, env, ctx);
+    }
+
+    try {
+      return await withWriteLease(env.DB, writerKind(url.pathname), async (lease) => {
+        const headers = new Headers(request.headers);
+        headers.set(WRITE_LEASE_ID_HEADER, lease.id);
+        headers.set(WRITE_LEASE_GENERATION_HEADER, String(lease.generation));
+        return handler.fetch(new Request(request, { headers }), env, ctx);
+      }, request.headers.get("x-request-id") ?? undefined);
+    } catch (error) {
+      if (error instanceof MaintenanceModeError) return maintenanceResponse(error);
+      throw error;
+    }
   },
 };
 
 export default worker;
+
+function isMutation(method: string) {
+  return method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE";
+}
+
+function isMaintenanceEndpoint(pathname: string) {
+  return pathname === "/api/maintenance" || pathname.startsWith("/api/maintenance/");
+}
+
+function writerKind(pathname: string) {
+  if (pathname === "/api/whatsapp/webhook") return "whatsapp-webhook";
+  if (pathname.startsWith("/v1/")) return "v1:" + pathname.slice(4, 100);
+  return "api:" + pathname.slice(0, 100);
+}
