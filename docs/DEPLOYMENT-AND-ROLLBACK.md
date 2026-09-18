@@ -107,6 +107,19 @@ snapshot, verify zero unexpected findings, reopen traffic, and repeat one
 authenticated read/write smoke check. Record the tested commit, migration,
 generation, timestamps, drain result, reconciliation JSON, and abort decisions.
 
+The repository includes a credential-free control-plane harness for this drill:
+`node scripts/rollback-staging-drill.mjs`. It sends the ChatGPT-authenticated
+operator headers from `HIDACA_STAGING_AUTH_EMAIL` (and the optional
+`HIDACA_STAGING_AUTH_FULL_NAME`), enters maintenance, polls for a zero-writer
+state, runs reconciliation with the operator-supplied `--snapshot-at` timestamp,
+and reopens traffic only when every reconciliation check is clean. It writes the
+evidence JSON to stdout, or to `--output <path>` when requested. The command
+requires `--base-url` (or `HIDACA_STAGING_URL`), a valid RFC3339
+`--snapshot-at`, and rejects the production hostname. Start the five writer
+probes described above before invoking it; the harness does not invent payloads
+or signatures for those external integrations. Any drain, request, or
+reconciliation failure leaves the barrier closed for operator investigation.
+
 If an explicitly approved structural rollback is required instead of Time
 Travel, validate the down scripts on a copy first and run them newest-first:
 
