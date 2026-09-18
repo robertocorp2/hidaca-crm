@@ -13,3 +13,16 @@ test("branded not-found route exposes an accessible authenticated recovery path"
   assert.match(page, /El acceso al CRM sigue protegido/);
   assert.doesNotMatch(page, /(?:\/api\/|drizzle|database|db\.|fetch\()/i);
 });
+
+test("branded not-found shell keeps responsive content within the viewport", async () => {
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const shell = css.match(/\.login-shell\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+  const card = css.match(/\.login-card\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+
+  assert.match(shell, /min-height:\s*100vh/);
+  assert.match(shell, /padding:\s*28px/);
+  assert.match(card, /box-sizing:\s*border-box/);
+  assert.match(card, /max-width:\s*510px/);
+  assert.match(card, /min-width:\s*0/);
+  assert.match(card, /width:\s*100%/);
+});
