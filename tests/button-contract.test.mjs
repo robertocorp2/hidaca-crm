@@ -5,7 +5,7 @@ import test from "node:test";
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("shared button primitives expose the canonical variant and size contract", async () => {
-  const [ui, css, docs, workspace, showcase, entities, projects, operations] = await Promise.all([
+  const [ui, css, docs, workspace, showcase, entities, projects, operations, dailyBrief] = await Promise.all([
     read("../app/app/ui.tsx"),
     read("../app/globals.css"),
     read("../docs/BUTTONS.md"),
@@ -14,6 +14,7 @@ test("shared button primitives expose the canonical variant and size contract", 
     read("../app/app/entity-views.tsx"),
     read("../app/app/projects-view.tsx"),
     read("../app/app/operations-client.tsx"),
+    read("../app/app/daily-brief-panel.tsx"),
   ]);
 
   assert.match(ui, /export function Button/);
@@ -45,4 +46,8 @@ test("shared button primitives expose the canonical variant and size contract", 
   assert.match(workspace, /<Button[\s\S]*className="danger-menu-item"/);
   assert.match(workspace, /<Button[\s\S]*relationship-empty-action/);
   assert.match(operations, /<Button[\s\S]*variant="danger"/);
+  assert.doesNotMatch(dailyBrief, /<button[\s\S]{0,120}className="(?:primary|secondary|danger|text)-button/);
+  assert.match(dailyBrief, /<Button[\s\S]*variant="secondary"[\s\S]*Actualizar/);
+  assert.match(dailyBrief, /<Button[\s\S]*variant="text"[\s\S]*Preparar seguimiento/);
+  assert.match(dailyBrief, /<Button[\s\S]*variant="secondary"[\s\S]*Rechazar/);
 });
