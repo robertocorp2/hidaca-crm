@@ -32,7 +32,7 @@ test("shared CRM workspace exposes the modern record primitives", async () => {
   for (const marker of [
     "--color-primary",
     "--space-6",
-    ".compact-action",
+    ".button-size-sm",
     ".record-action-menu-popover",
     ".record-quick-summary",
     ".relationship-empty-state",

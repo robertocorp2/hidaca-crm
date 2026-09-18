@@ -67,7 +67,9 @@ import type {
 } from "./types";
 import {
   ActiveFilterChip,
+  Button,
   Empty,
+  IconButton,
   AppearancePreferences,
   AutocompleteInput,
   ColumnFilterPopover,
@@ -821,16 +823,16 @@ export function OperationsClient({
           >
             <p>{confirmation.message}</p>
             <div className="confirm-actions">
-              <button
-                className="secondary-button"
+              <Button
+                variant="secondary"
                 disabled={busy}
                 onClick={() => setConfirmation(null)}
                 type="button"
               >
                 Cancelar
-              </button>
-              <button
-                className="danger-button"
+              </Button>
+              <Button
+                variant="danger"
                 disabled={busy}
                 onClick={async () => {
                   setBusy(true);
@@ -841,7 +843,7 @@ export function OperationsClient({
                 type="button"
               >
                 {busy ? "Procesando…" : confirmation.confirmLabel}
-              </button>
+              </Button>
             </div>
           </Modal>
         )}
@@ -902,9 +904,8 @@ export function OperationsClient({
         >
           <header className="topbar">
             <div className="topbar-leading">
-              <button
-                aria-expanded={mobileNav}
-                aria-label={
+              <IconButton
+                label={
                   mobileNav
                     ? "Cerrar navegación"
                     : drawerNavigation
@@ -922,10 +923,11 @@ export function OperationsClient({
                   }
                 }}
                 ref={menuButtonRef}
+                size="md"
                 type="button"
               >
                 <span aria-hidden="true">☰</span>
-              </button>
+              </IconButton>
               <DashboardLink
                 className="topbar-brand"
                 href={viewHref("resumen")}
@@ -953,25 +955,26 @@ export function OperationsClient({
                 }}
               />
             </div>
-            <button
-              aria-expanded={mobileSearchOpen}
-              aria-label={
+            <IconButton
+              label={
                 mobileSearchOpen ? "Cerrar búsqueda" : "Abrir búsqueda global"
               }
               className="mobile-search-button"
               onClick={() => setMobileSearchOpen((value) => !value)}
+              size="md"
               type="button"
             >
               <span aria-hidden="true">⌕</span>
-            </button>
+            </IconButton>
             <div className="profile-menu" ref={profileRef}>
-              <button
+              <Button
                 aria-expanded={profileOpen}
                 aria-haspopup="menu"
                 aria-label={`Perfil de ${currentUser.displayName}`}
                 className="profile-trigger"
                 onClick={() => setProfileOpen((value) => !value)}
                 type="button"
+                variant="ghost"
               >
                 <span className="profile-avatar" aria-hidden="true">
                   {currentUser.displayName.trim().charAt(0).toUpperCase() ||
@@ -984,23 +987,25 @@ export function OperationsClient({
                 <span className="profile-chevron" aria-hidden="true">
                   ▾
                 </span>
-              </button>
+              </Button>
               {profileOpen && (
                 <div className="profile-dropdown" role="menu">
                   <div>
                     <strong>{currentUser.displayName}</strong>
                     <small>{roleLabel(currentUser.role)}</small>
                   </div>
-                  <button
+                  <Button
+                    className="profile-dropdown-action"
                     onClick={() => {
                       setAppearanceOpen(true);
                       setProfileOpen(false);
                     }}
                     role="menuitem"
                     type="button"
+                    variant="text"
                   >
                     Preferencias de apariencia
-                  </button>
+                  </Button>
                   <a href={signOutHref} role="menuitem">
                     Cerrar sesión
                   </a>
@@ -1448,9 +1453,9 @@ export function OperationsClient({
                 <PageHeader
                   action={
                     canWrite ? (
-                      <button className="primary-button" onClick={openCreate}>
+                      <Button variant="primary" onClick={openCreate}>
                         Nuevo registro
-                      </button>
+                      </Button>
                     ) : undefined
                   }
                   description="Consulta, registra y actualiza información."
@@ -1525,8 +1530,8 @@ export function OperationsClient({
                       />
                     ))}
                     {activeGenericFilters.length > 1 && (
-                      <button
-                        className="text-button"
+                      <Button
+                        variant="text"
                         onClick={() => {
                           clearGenericFilters();
                           setGenericPage("1");
@@ -1534,7 +1539,7 @@ export function OperationsClient({
                         type="button"
                       >
                         Limpiar filtros
-                      </button>
+                      </Button>
                     )}
                   </div>
                 )}
@@ -1687,12 +1692,12 @@ function MobileBottomNav({
           </a>
         );
       })}
-      <button aria-label="Más módulos" onClick={onMore} type="button">
+      <Button aria-label="Más módulos" onClick={onMore} type="button" variant="text">
         <span aria-hidden="true" className="mobile-bottom-more-icon">
           ⋯
         </span>
         <span>Más</span>
-      </button>
+      </Button>
     </nav>
   );
 }
@@ -2213,9 +2218,9 @@ function DocumentsView({
               ))}
             </select>
           </label>
-          <button className="primary-button" disabled={busy}>
+          <Button variant="primary" disabled={busy}>
             Cargar
-          </button>
+          </Button>
           <small>PDF, imagen, DOCX o XLSX. Máximo 10 MB.</small>
         </form>
       )}
@@ -2277,12 +2282,13 @@ function DocumentsView({
                 </div>
                 <a href={`/api/documents/${document.id}`}>Descargar</a>
                 {canWrite && (
-                  <button
+                  <Button
+                    variant="danger"
                     className="danger-link"
                     onClick={() => onDelete(document)}
                   >
                     Eliminar
-                  </button>
+                  </Button>
                 )}
               </article>
             ))
@@ -2517,20 +2523,21 @@ function RecordsTable({
                         title={record.title}
                       />
                     )}
-                    <button
-                      className="text-button"
+                    <Button
+                      variant="text"
                       hidden={!canWrite}
                       onClick={() => onEdit(record)}
                     >
                       Editar
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="danger"
                       className="danger-link"
                       hidden={!canWrite}
                       onClick={() => onArchive(record)}
                     >
                       Archivar
-                    </button>
+                    </Button>
                   </td>
                 )}
               </tr>
@@ -2646,16 +2653,16 @@ function RecordForm({
         </label>
       </div>
       <div className="form-actions">
-        <button
-          className="secondary-button"
+        <Button
+          variant="secondary"
           onClick={requestCancel}
           type="button"
         >
           Cancelar
-        </button>
-        <button className="primary-button" disabled={busy}>
+        </Button>
+        <Button variant="primary" disabled={busy}>
           {busy ? "Guardando…" : "Guardar"}
-        </button>
+        </Button>
       </div>
     </form>
   );
