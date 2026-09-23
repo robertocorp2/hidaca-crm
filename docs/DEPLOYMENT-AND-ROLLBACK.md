@@ -115,7 +115,11 @@ state, runs reconciliation with the operator-supplied `--snapshot-at` timestamp,
 and reopens traffic only when every reconciliation check is clean. It writes the
 evidence JSON to stdout, or to `--output <path>` when requested. The command
 requires `--base-url` (or `HIDACA_STAGING_URL`), a valid RFC3339
-`--snapshot-at`, and rejects the production hostname. Start the five writer
+`--snapshot-at`, and rejects the production hostname, including its trailing-dot
+absolute DNS spelling. HTTP redirects are rejected so operator headers and
+maintenance mutations cannot be forwarded to an unvalidated target. Supply the
+final, explicitly verified staging URL; a redirect failure is not permission to
+use a production URL or bypass authentication. Start the five writer
 probes described above before invoking it; the harness does not invent payloads
 or signatures for those external integrations. Any drain, request, or
 reconciliation failure leaves the barrier closed for operator investigation.

@@ -71,6 +71,48 @@ test("production is rejected before any request", () => {
   assert.throws(() => validateBaseUrl("https://hidaca-constructora-app.robertocorp2.chatgpt.site"), /Production/);
 });
 
+test("production's absolute DNS hostname is rejected before any request", async () => {
+  let requests = 0;
+  await assert.rejects(() => runDrill({
+    baseUrl: "https://HIDACA-CONSTRUCTORA-APP.ROBERTOCORP2.CHATGPT.SITE./",
+    authEmail: "admin@example.com",
+    snapshotAt: "2026-09-18T18:00:00Z",
+    fetchImpl: async () => {
+      requests++;
+      throw new Error("Unexpected request to production");
+    },
+  }), /Production is not an allowed target/);
+  assert.equal(requests, 0);
+});
+
+test("staging redirects cannot forward an authenticated maintenance request", async () => {
+  let redirectedRequests = 0;
+  let reopenRequests = 0;
+  await withServer((_request, response) => {
+    redirectedRequests++;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ error: "Redirect target must never be contacted" }));
+  }, async (redirectTarget) => {
+    await assert.rejects(() => withServer((request, response) => {
+      if (request.url === "/api/maintenance/enter") {
+        response.writeHead(307, { location: `${redirectTarget}/api/maintenance/enter` });
+        response.end();
+      } else {
+        if (request.url === "/api/maintenance/reopen") reopenRequests++;
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ mode: "open", activeWriterCount: 0 }));
+      }
+    }, (baseUrl) => runDrill({
+      baseUrl,
+      authEmail: "admin@example.com",
+      snapshotAt: "2026-09-18T18:00:00Z",
+      timeoutMs: 0,
+    })));
+  });
+  assert.equal(redirectedRequests, 0);
+  assert.equal(reopenRequests, 0);
+});
+
 test("reconciliation validator rejects incomplete inventory", () => {
   assert.throws(() => validateReconciliation({ ...cleanReconciliation(), r2: { ...cleanReconciliation().r2, inventoryComplete: false } }), /not clean/i);
 });

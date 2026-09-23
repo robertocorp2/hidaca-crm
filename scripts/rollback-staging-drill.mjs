@@ -23,7 +23,8 @@ export function validateBaseUrl(value) {
   if (url.protocol !== "https:" && !(url.protocol === "http:" && local.has(url.hostname))) {
     throw new DrillFailure("The rollback drill only allows HTTPS staging URLs or local test servers");
   }
-  if (url.hostname.toLowerCase() === PRODUCTION_HOST) {
+  // Absolute DNS names with trailing dots still identify the same host.
+  if (url.hostname.toLowerCase().replace(/\.+$/, "") === PRODUCTION_HOST) {
     throw new DrillFailure("Production is not an allowed target for the rollback staging drill");
   }
   return url;
@@ -51,6 +52,8 @@ function joinUrl(baseUrl, pathname) {
 async function requestJson(fetchImpl, baseUrl, pathname, options = {}) {
   const response = await fetchImpl(joinUrl(baseUrl, pathname), {
     ...options,
+    // Never forward operator headers or maintenance mutations to another target.
+    redirect: "error",
     headers: {
       accept: "application/json",
       ...(options.body ? { "content-type": "application/json" } : {}),
