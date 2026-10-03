@@ -66,6 +66,15 @@ export class MaintenanceDrainTimeoutError extends Error {
   }
 }
 
+export class MaintenanceStateConflictError extends Error {
+  readonly code = "MAINTENANCE_STATE_CONFLICT";
+
+  constructor() {
+    super("El estado de mantenimiento cambió; verifique la generación antes de reabrir.");
+    this.name = "MaintenanceStateConflictError";
+  }
+}
+
 export async function getMaintenanceStatus(d1: D1Database): Promise<MaintenanceStatus> {
   const state = await getState(d1);
   const activeWriters = await allActiveWriters(d1);
@@ -202,22 +211,33 @@ export async function enterMaintenance(
 
 export async function reopenMaintenance(d1: D1Database, operatorEmail: string) {
   const currentState = await getState(d1);
+  // A request that observed open must never reopen a later maintenance window.
+  if (currentState.mode === "open") return getMaintenanceStatus(d1);
   const activeWriters = await allActiveWriters(d1);
-  if (currentState.mode === "maintenance" && activeWriters.length) throw new MaintenanceDrainTimeoutError(activeWriters);
+  if (activeWriters.length) throw new MaintenanceDrainTimeoutError(activeWriters);
   const now = new Date().toISOString();
   const result = await d1
     .prepare(
       `UPDATE maintenance_state
        SET mode = 'open', generation = generation + 1, reason = '', operator_email = ?, activated_at = NULL, updated_at = ?
-       WHERE id = 1 AND mode = 'maintenance'`,
+       WHERE id = 1 AND mode = 'maintenance' AND generation = ?
+         AND NOT EXISTS (SELECT 1 FROM write_leases WHERE outcome IS NULL)`,
     )
-    .bind(operatorEmail.slice(0, 320), now)
+    .bind(operatorEmail.slice(0, 320), now, currentState.generation)
     .run();
-  if (Number(result.meta.changes ?? 0) === 1) {
-    await d1.prepare("INSERT INTO audit_log (actor_email, action, entity_type, entity_id, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .bind(operatorEmail, "reopen", "maintenance", "1", "{}", now)
-      .run();
+  if (Number(result.meta.changes ?? 0) !== 1) {
+    const latestState = await getState(d1);
+    if (latestState.mode !== "maintenance" || latestState.generation !== currentState.generation) {
+      throw new MaintenanceStateConflictError();
+    }
+    const unresolvedWriters = await allActiveWriters(d1);
+    if (unresolvedWriters.length) throw new MaintenanceDrainTimeoutError(unresolvedWriters);
+    // Do not retry a failed transition against state that changed again.
+    throw new MaintenanceStateConflictError();
   }
+  await d1.prepare("INSERT INTO audit_log (actor_email, action, entity_type, entity_id, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(operatorEmail, "reopen", "maintenance", "1", "{}", now)
+    .run();
   return getMaintenanceStatus(d1);
 }
 

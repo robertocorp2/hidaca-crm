@@ -50,6 +50,15 @@ Authenticated administrators use these endpoints:
 - `POST /api/maintenance/reopen` — advance the generation and reopen writes
   only after restore and reconciliation succeed.
 
+Reopening compares the maintenance generation read by that request and checks
+for zero unresolved leases in the same database update. An already-open state
+is a read-only no-op; it cannot reopen a maintenance window entered afterward.
+If the observed generation changes before the update, reopening returns
+`409 MAINTENANCE_STATE_CONFLICT`. Inspect the current status and revalidate the
+maintenance window before issuing a new request; do not automatically retry a
+stale reopen. Unresolved writers, including expired leases, continue to return
+`409 MAINTENANCE_DRAIN_TIMEOUT` and prevent the transition.
+
 The enter operation returns `409 MAINTENANCE_DRAIN_TIMEOUT` if active or
 unresolved leases remain at the deadline. An expired lease is not proof that
 its writer stopped: leave the system in maintenance mode, inspect the reported
