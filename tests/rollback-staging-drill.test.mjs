@@ -7,7 +7,7 @@ function cleanReconciliation() {
   return {
     snapshotAt: "2026-09-18T18:00:00.000Z",
     checkedAt: "2026-09-18T18:01:00.000Z",
-    d1: { referencedObjectCount: 0, postSnapshot: { documents: { count: 0, sample: [] } } },
+    d1: { referencedObjectCount: 0, postSnapshot: { documents: { count: 0, sample: [] } }, maintenanceEntryAudit: { count: 0, sample: [] } },
     r2: { inventoryComplete: true, objectCount: 0, manifestSha256: "a".repeat(64), postSnapshotObjects: [], missingReferencedObjects: [], orphanedObjects: [] },
   };
 }
@@ -113,4 +113,11 @@ test("local redirects are rejected before a second request", async () => {
 
 test("reconciliation validator rejects incomplete inventory", () => {
   assert.throws(() => validateReconciliation({ ...cleanReconciliation(), r2: { ...cleanReconciliation().r2, inventoryComplete: false } }), /not clean/i);
+});
+
+test("reconciliation accepts one maintenance-entry audit but rejects a second entry", () => {
+  const clean = cleanReconciliation();
+  const entry = { id: "1", created_at: "2026-09-18T18:00:30.000Z" };
+  assert.doesNotThrow(() => validateReconciliation({ ...clean, d1: { ...clean.d1, maintenanceEntryAudit: { count: 1, sample: [entry] } } }));
+  assert.throws(() => validateReconciliation({ ...clean, d1: { ...clean.d1, maintenanceEntryAudit: { count: 2, sample: [entry, { ...entry, id: "2" }] } } }), /not clean/i);
 });

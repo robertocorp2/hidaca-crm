@@ -13,6 +13,7 @@ export type RollbackReconciliation = {
   d1: {
     referencedObjectCount: number;
     postSnapshot: Record<string, { count: number; sample: TimestampRow[] }>;
+    maintenanceEntryAudit: { count: number; sample: TimestampRow[] };
   };
   r2: {
     inventoryComplete: boolean;
@@ -38,7 +39,12 @@ const POST_SNAPSHOT_QUERIES: Record<string, { sample: string; count: string }> =
   ecfArtifacts: { sample: "SELECT id, created_at FROM ecf_artifacts WHERE created_at > ? ORDER BY created_at LIMIT 20", count: "SELECT COUNT(*) AS count FROM ecf_artifacts WHERE created_at > ?" },
   voiceRecordings: { sample: "SELECT id, created_at FROM voice_recordings WHERE created_at > ? ORDER BY created_at LIMIT 20", count: "SELECT COUNT(*) AS count FROM voice_recordings WHERE created_at > ?" },
   whatsappMessages: { sample: "SELECT id, created_at FROM whatsapp_messages WHERE created_at > ? ORDER BY created_at LIMIT 20", count: "SELECT COUNT(*) AS count FROM whatsapp_messages WHERE created_at > ?" },
-  auditLog: { sample: "SELECT CAST(id AS TEXT) AS id, created_at FROM audit_log WHERE created_at > ? ORDER BY created_at LIMIT 20", count: "SELECT COUNT(*) AS count FROM audit_log WHERE created_at > ?" },
+  auditLog: { sample: "SELECT CAST(id AS TEXT) AS id, created_at FROM audit_log WHERE created_at > ? AND NOT (entity_type = 'maintenance' AND entity_id = '1' AND action = 'enter') ORDER BY created_at LIMIT 20", count: "SELECT COUNT(*) AS count FROM audit_log WHERE created_at > ? AND NOT (entity_type = 'maintenance' AND entity_id = '1' AND action = 'enter')" },
+};
+
+const MAINTENANCE_ENTRY_AUDIT = {
+  sample: "SELECT CAST(id AS TEXT) AS id, created_at FROM audit_log WHERE created_at > ? AND entity_type = 'maintenance' AND entity_id = '1' AND action = 'enter' ORDER BY created_at LIMIT 20",
+  count: "SELECT COUNT(*) AS count FROM audit_log WHERE created_at > ? AND entity_type = 'maintenance' AND entity_id = '1' AND action = 'enter'",
 };
 
 export async function reconcileRollback(d1: D1Database, files: RollbackFiles, snapshotAt: string): Promise<RollbackReconciliation> {
@@ -55,6 +61,10 @@ export async function reconcileRollback(d1: D1Database, files: RollbackFiles, sn
     ]);
     return [name, { count: Number(count?.count ?? 0), sample: rows.results ?? [] }] as const;
   })));
+  const [maintenanceEntryCount, maintenanceEntryRows] = await Promise.all([
+    d1.prepare(MAINTENANCE_ENTRY_AUDIT.count).bind(snapshotAt).first<CountRow>(),
+    d1.prepare(MAINTENANCE_ENTRY_AUDIT.sample).bind(snapshotAt).all<TimestampRow>(),
+  ]);
 
   const objects: string[] = [];
   const postSnapshotObjects = new Set<string>();
@@ -85,6 +95,7 @@ export async function reconcileRollback(d1: D1Database, files: RollbackFiles, sn
     d1: {
       referencedObjectCount: references.size,
       postSnapshot,
+      maintenanceEntryAudit: { count: Number(maintenanceEntryCount?.count ?? 0), sample: maintenanceEntryRows.results ?? [] },
     },
     r2: {
       inventoryComplete,

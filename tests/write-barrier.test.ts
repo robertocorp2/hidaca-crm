@@ -174,6 +174,22 @@ test("rollback reconciliation reports missing, orphaned, and post-snapshot evide
   }
 });
 
+test("rollback reconciliation separates the drill's own maintenance-entry audit", async () => {
+  const { binding, sqlite, files } = database();
+  try {
+    const snapshotAt = new Date(Date.now() - 5_000).toISOString();
+    await enterMaintenance(binding, { reason: "controlled staging drill", operatorEmail: "admin@example.com" }, files);
+    const report = await reconcileRollback(binding, {
+      async list() { return { objects: [], truncated: false }; },
+    }, snapshotAt);
+    assert.equal(report.d1.postSnapshot.auditLog.count, 0);
+    assert.equal(report.d1.maintenanceEntryAudit.count, 1);
+    assert.equal(report.d1.maintenanceEntryAudit.sample.length, 1);
+  } finally {
+    sqlite.close();
+  }
+});
+
 test("the controlled drill drains browser, webhook, scheduled, and blob writers", async () => {
   const { binding, sqlite, files } = database();
   try {

@@ -38,6 +38,7 @@ export function validateReconciliation(reconciliation) {
   const r2 = reconciliation?.r2;
   const postSnapshot = reconciliation?.d1?.postSnapshot;
   const postSnapshotRows = Object.values(postSnapshot ?? {});
+  const maintenanceEntryAudit = reconciliation?.d1?.maintenanceEntryAudit;
   const failures = [];
   if (r2?.inventoryComplete !== true) failures.push("R2 inventory is incomplete");
   if ((r2?.missingReferencedObjects ?? []).length) failures.push("R2 references are missing");
@@ -45,6 +46,13 @@ export function validateReconciliation(reconciliation) {
   if ((r2?.postSnapshotObjects ?? []).length) failures.push("R2 contains post-snapshot objects");
   if (postSnapshotRows.some((entry) => Number(entry?.count ?? 0) !== 0 || (entry?.sample ?? []).length)) {
     failures.push("D1 contains post-snapshot rows");
+  }
+  // A drill taken before restore can retain its own entry audit. Any extra
+  // entry is an unexpected control transition and must keep writes closed.
+  if (!maintenanceEntryAudit || !Number.isInteger(maintenanceEntryAudit.count)
+    || maintenanceEntryAudit.count < 0 || maintenanceEntryAudit.count > 1
+    || maintenanceEntryAudit.sample?.length !== maintenanceEntryAudit.count) {
+    failures.push("D1 maintenance-entry audit is missing or unexpected");
   }
   if (failures.length) throw new DrillFailure("Rollback reconciliation is not clean; maintenance remains closed", { failures, reconciliation });
 }

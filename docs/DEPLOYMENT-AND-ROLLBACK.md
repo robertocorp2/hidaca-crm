@@ -93,7 +93,9 @@ the additive migration itself caused a verified data issue.
    `GET /api/maintenance/reconciliation?snapshotAt=<RFC3339>`.
 7. Abort reopening if the inventory is incomplete, a D1 reference is missing
    in R2, an unexpected R2 object is orphaned, or post-snapshot rows/audit
-   entries are present. Investigate and correct the evidence before traffic.
+   entries are present. A single maintenance-entry audit from the current
+   drill is reported separately and is allowed; a second entry is an abort.
+   Investigate and correct the evidence before traffic.
 8. Verify the two pre-existing legacy records and the active staff allowlist.
 9. Smoke-test the previous Sites version, then reopen writes only after all
    checks are clean.
