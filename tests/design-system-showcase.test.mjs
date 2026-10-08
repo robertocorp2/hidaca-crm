@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { access } from "node:fs/promises";
 import test from "node:test";
 
-const root = new URL("../../design-system/", import.meta.url);
+const root = new URL("../design-system/", import.meta.url);
 const appRoot = new URL("../app/", import.meta.url);
 
 test("design system contract includes tokens, component and pattern references", async () => {
