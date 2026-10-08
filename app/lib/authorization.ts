@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { env } from "cloudflare:workers";
 import { getD1, getDb } from "../../db";
 import { rolePermissions, staffUsers, userPermissionOverrides } from "../../db/schema";
 import {
@@ -55,7 +56,7 @@ async function resolveAuthorizedUser(user: ChatGPTUser): Promise<AuthorizedUser 
   // Existing (including disabled) users are a pure read, even during maintenance.
   if (!staff && email === INITIAL_OWNER_EMAIL) {
     try {
-      await withWriteLease(getD1(), "authorization-owner-bootstrap", async () => {
+      await withWriteLease(getD1(), env.FILES, "authorization-owner-bootstrap", async () => {
         const now = new Date().toISOString();
         await db.insert(staffUsers).values({
           email, name: user.fullName ?? user.displayName, role: "admin", active: true,
@@ -64,7 +65,7 @@ async function resolveAuthorizedUser(user: ChatGPTUser): Promise<AuthorizedUser 
       });
     } catch (error) {
       // A missing owner cannot be provisioned while writes are paused.
-      if (error instanceof MaintenanceModeError) return null;
+      if (error instanceof MaintenanceModeError || (error as { code?: string })?.code === "MAINTENANCE_AUTHORITY_UNAVAILABLE") return null;
       throw error;
     }
     [staff] = await db.select().from(staffUsers).where(eq(staffUsers.email, email)).limit(1);

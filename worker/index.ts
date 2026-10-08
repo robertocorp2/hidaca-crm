@@ -12,6 +12,7 @@ import {
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
+  FILES: R2Bucket;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -52,14 +53,14 @@ const worker = {
     }
 
     try {
-      return await withWriteLease(env.DB, writerKind(url.pathname), async (lease) => {
+      return await withWriteLease(env.DB, env.FILES, writerKind(url.pathname), async (lease) => {
         const headers = new Headers(request.headers);
         headers.set(WRITE_LEASE_ID_HEADER, lease.id);
         headers.set(WRITE_LEASE_GENERATION_HEADER, String(lease.generation));
         return handler.fetch(new Request(request, { headers }), env, ctx);
       }, request.headers.get("x-request-id") ?? undefined);
     } catch (error) {
-      if (error instanceof MaintenanceModeError) return maintenanceResponse(error);
+      if (error instanceof MaintenanceModeError || (error as { code?: string })?.code === "MAINTENANCE_AUTHORITY_UNAVAILABLE") return maintenanceResponse();
       throw error;
     }
   },

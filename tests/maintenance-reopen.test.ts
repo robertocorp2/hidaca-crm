@@ -23,18 +23,18 @@ function afterNextStateRead(binding: ReturnType<typeof database>["binding"], act
 }
 
 test("reopen that observed open cannot undo a newly entered maintenance window", async () => {
-  const { binding, sqlite } = database();
+  const { binding, sqlite, files } = database();
   try {
-    const lease = await acquireWriteLease(binding, "api:slow", "overlapping-enter");
+    const lease = await acquireWriteLease(binding, files, "api:slow", "overlapping-enter");
     afterNextStateRead(binding, async () => {
       await assert.rejects(() => enterMaintenance(binding, {
         reason: "new maintenance window", operatorEmail: "other@example.com", timeoutMs: 0,
-      }), { code: "MAINTENANCE_DRAIN_TIMEOUT" });
+      }, files), { code: "MAINTENANCE_DRAIN_TIMEOUT" });
     });
 
-    await reopenMaintenance(binding, "stale@example.com");
+    await reopenMaintenance(binding, "stale@example.com", files);
 
-    const status = await getMaintenanceStatus(binding);
+    const status = await getMaintenanceStatus(binding, files);
     assert.equal(status.mode, "maintenance");
     assert.equal(status.generation, lease.generation + 1);
     assert.equal(status.operatorEmail, "other@example.com");
@@ -46,17 +46,17 @@ test("reopen that observed open cannot undo a newly entered maintenance window",
 });
 
 test("a stale reopen cannot reopen a newer drained maintenance generation", async () => {
-  const { binding, sqlite } = database();
+  const { binding, sqlite, files } = database();
   try {
-    const initial = await enterMaintenance(binding, { reason: "first window", operatorEmail: "admin@example.com" });
+    const initial = await enterMaintenance(binding, { reason: "first window", operatorEmail: "admin@example.com" }, files);
     afterNextStateRead(binding, async () => {
-      await reopenMaintenance(binding, "other@example.com");
-      await enterMaintenance(binding, { reason: "second window", operatorEmail: "other@example.com" });
+      await reopenMaintenance(binding, "other@example.com", files);
+      await enterMaintenance(binding, { reason: "second window", operatorEmail: "other@example.com" }, files);
     });
 
-    await assert.rejects(() => reopenMaintenance(binding, "stale@example.com"), { code: "MAINTENANCE_STATE_CONFLICT" });
+    await assert.rejects(() => reopenMaintenance(binding, "stale@example.com", files), { code: "MAINTENANCE_STATE_CONFLICT" });
 
-    const status = await getMaintenanceStatus(binding);
+    const status = await getMaintenanceStatus(binding, files);
     assert.equal(status.mode, "maintenance");
     assert.equal(status.generation, initial.generation + 2);
     assert.equal(status.reason, "second window");
@@ -68,11 +68,11 @@ test("a stale reopen cannot reopen a newer drained maintenance generation", asyn
 });
 
 test("reopen checks unresolved writers in the same statement as the transition", async () => {
-  const { binding, sqlite } = database();
+  const { binding, sqlite, files } = database();
   try {
-    const lease = await acquireWriteLease(binding, "api:unknown", "unresolved-writer");
+    const lease = await acquireWriteLease(binding, files, "api:unknown", "unresolved-writer");
     await releaseWriteLease(binding, lease);
-    const initial = await enterMaintenance(binding, { reason: "drained", operatorEmail: "admin@example.com" });
+    const initial = await enterMaintenance(binding, { reason: "drained", operatorEmail: "admin@example.com" }, files);
     const prepare = binding.prepare.bind(binding);
     let interleaved = false;
     binding.prepare = (sql) => {
@@ -87,10 +87,10 @@ test("reopen checks unresolved writers in the same statement as the transition",
       return prepare(sql);
     };
 
-    await assert.rejects(() => reopenMaintenance(binding, "admin@example.com"), { code: "MAINTENANCE_DRAIN_TIMEOUT" });
+    await assert.rejects(() => reopenMaintenance(binding, "admin@example.com", files), { code: "MAINTENANCE_DRAIN_TIMEOUT" });
 
     assert.equal(interleaved, true);
-    const status = await getMaintenanceStatus(binding);
+    const status = await getMaintenanceStatus(binding, files);
     assert.equal(status.mode, "maintenance");
     assert.equal(status.generation, initial.generation);
     assert.equal(status.activeWriters[0]?.id, lease.id);
@@ -101,11 +101,11 @@ test("reopen checks unresolved writers in the same statement as the transition",
 });
 
 test("reopening an already open barrier is a read-only no-op even with an active writer", async () => {
-  const { binding, sqlite } = database();
+  const { binding, sqlite, files } = database();
   try {
-    await acquireWriteLease(binding, "api:active", "no-op");
-    const before = await getMaintenanceStatus(binding);
-    const result = await reopenMaintenance(binding, "admin@example.com");
+    await acquireWriteLease(binding, files, "api:active", "no-op");
+    const before = await getMaintenanceStatus(binding, files);
+    const result = await reopenMaintenance(binding, "admin@example.com", files);
     assert.deepEqual(result, before);
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE action = 'reopen'").get()?.count, 0);
   } finally {
@@ -114,24 +114,24 @@ test("reopening an already open barrier is a read-only no-op even with an active
 });
 
 test("competing reopens advance a drained generation and audit it only once", async () => {
-  const { binding, sqlite } = database();
+  const { binding, sqlite, files } = database();
   try {
-    const initial = await enterMaintenance(binding, { reason: "ready", operatorEmail: "admin@example.com" });
+    const initial = await enterMaintenance(binding, { reason: "ready", operatorEmail: "admin@example.com" }, files);
     afterNextStateRead(binding, async () => {
-      const winner = await reopenMaintenance(binding, "winner@example.com");
+      const winner = await reopenMaintenance(binding, "winner@example.com", files);
       assert.equal(winner.mode, "open");
       assert.equal(winner.generation, initial.generation + 1);
     });
 
-    await assert.rejects(() => reopenMaintenance(binding, "stale@example.com"), { code: "MAINTENANCE_STATE_CONFLICT" });
+    await assert.rejects(() => reopenMaintenance(binding, "stale@example.com", files), { code: "MAINTENANCE_STATE_CONFLICT" });
 
-    const status = await getMaintenanceStatus(binding);
+    const status = await getMaintenanceStatus(binding, files);
     assert.equal(status.mode, "open");
     assert.equal(status.generation, initial.generation + 1);
     assert.equal(status.operatorEmail, "winner@example.com");
     const audits = sqlite.prepare("SELECT actor_email FROM audit_log WHERE action = 'reopen'").all();
     assert.deepEqual(audits.map((row) => row.actor_email), ["winner@example.com"]);
-    const lease = await acquireWriteLease(binding, "api:after-reopen", "after-reopen");
+    const lease = await acquireWriteLease(binding, files, "api:after-reopen", "after-reopen");
     await releaseWriteLease(binding, lease);
   } finally {
     sqlite.close();

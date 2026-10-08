@@ -29,7 +29,7 @@ for (const scenario of scenarios) {
       import { database } from "./tests/prospecting-support.ts";
       import { enterMaintenance, getMaintenanceStatus, MaintenanceDrainTimeoutError } from "./app/lib/write-barrier.ts";
       const scenario = process.argv[1];
-      const { sqlite, binding } = database();
+      const { sqlite, binding, files } = database();
       const db = drizzle(binding, { schema });
       const owner = "robertocorp2@gmail.com"; // Existing application bootstrap identity, not a credential.
       const email = scenario.startsWith("owner-") ? owner : "operator@example.com";
@@ -41,6 +41,7 @@ for (const scenario of scenarios) {
       const providerStarted = new Promise(resolve => { reachedProvider = resolve; });
       const providerRelease = new Promise(resolve => { releaseProvider = resolve; });
       const activeCount = () => sqlite.prepare("SELECT COUNT(*) AS n FROM write_leases WHERE outcome IS NULL").get().n;
+      mock.module("cloudflare:workers", { namedExports: { env: { FILES: files } } });
       mock.module(pathToFileURL(resolve("db/index.ts")).href, { namedExports: { getD1: () => binding, getDb: () => db } });
       mock.module(pathToFileURL(resolve("app/chatgpt-auth.ts")).href, { namedExports: {
         getChatGPTUser: async () => user, requireChatGPTUser: async () => user,
@@ -67,7 +68,7 @@ for (const scenario of scenarios) {
       if (scenario === "owner-missing-open") {
         sqlite.exec("CREATE TRIGGER require_bootstrap_lease BEFORE INSERT ON staff_users WHEN NOT EXISTS (SELECT 1 FROM write_leases WHERE outcome IS NULL) BEGIN SELECT RAISE(ABORT, 'bootstrap has no lease'); END");
       }
-      if (scenario.includes("maintenance")) sqlite.exec("UPDATE maintenance_state SET mode='maintenance', generation=generation+1 WHERE id=1");
+      if (scenario.includes("maintenance")) await enterMaintenance(binding, { reason: "fixture maintenance", operatorEmail: "operator@example.com" }, files);
       if (scenario.startsWith("owner-")) {
         const result = await authorizeApi(true);
         const allowed = scenario === "owner-existing-maintenance" || scenario === "owner-missing-open";
@@ -86,8 +87,8 @@ for (const scenario of scenarios) {
         if (scenario === "conversation-inflight") {
           await providerStarted;
           try {
-            assert.equal((await getMaintenanceStatus(binding)).activeWriterCount, 1);
-            await assert.rejects(() => enterMaintenance(binding, { reason: "drill", operatorEmail: "operator@example.com", timeoutMs: 0 }), MaintenanceDrainTimeoutError);
+            assert.equal((await getMaintenanceStatus(binding, files)).activeWriterCount, 1);
+            await assert.rejects(() => enterMaintenance(binding, { reason: "drill", operatorEmail: "operator@example.com", timeoutMs: 0 }, files), MaintenanceDrainTimeoutError);
           } finally { releaseProvider(); }
         }
         const response = await pending;

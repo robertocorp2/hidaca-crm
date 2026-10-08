@@ -20,9 +20,9 @@ export default {
     // an explicitly scoped CRM adapter before adding another tenant here.
     ctx.waitUntil((async () => {
       try {
-        await withWriteLease(env.DB, "prospecting-scheduled", () => runtime.tick("hidaca"));
+        await withWriteLease(env.DB, env.FILES, "prospecting-scheduled", () => runtime.tick("hidaca"));
       } catch (error) {
-        if (error instanceof MaintenanceModeError) {
+        if (error instanceof MaintenanceModeError || (error as { code?: string })?.code === "MAINTENANCE_AUTHORITY_UNAVAILABLE") {
           console.info("[prospecting] maintenance mode is active; scheduled writes were skipped");
           return;
         }

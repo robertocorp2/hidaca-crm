@@ -1,4 +1,6 @@
 import type { D1Database } from "@cloudflare/workers-types";
+import type { R2Bucket } from "@cloudflare/workers-types";
+import { enterMaintenanceAuthority, readMaintenanceAuthority, reopenMaintenanceAuthority } from "./maintenance-authority";
 
 export const WRITE_LEASE_ID_HEADER = "x-hidaca-write-lease";
 export const WRITE_LEASE_GENERATION_HEADER = "x-hidaca-write-generation";
@@ -75,16 +77,17 @@ export class MaintenanceStateConflictError extends Error {
   }
 }
 
-export async function getMaintenanceStatus(d1: D1Database): Promise<MaintenanceStatus> {
+export async function getMaintenanceStatus(d1: D1Database, files: R2Bucket): Promise<MaintenanceStatus> {
+  const authority = await readMaintenanceAuthority(files);
   const state = await getState(d1);
   const activeWriters = await allActiveWriters(d1);
   return {
-    mode: state.mode,
+    mode: authority.mode,
     generation: state.generation,
-    reason: state.reason,
-    operatorEmail: state.operator_email,
-    activatedAt: state.activated_at,
-    updatedAt: state.updated_at,
+    reason: authority.reason,
+    operatorEmail: authority.operatorEmail,
+    activatedAt: authority.activatedAt,
+    updatedAt: authority.updatedAt,
     activeWriterCount: activeWriters.length,
     activeWriters,
   };
@@ -92,10 +95,12 @@ export async function getMaintenanceStatus(d1: D1Database): Promise<MaintenanceS
 
 export async function acquireWriteLease(
   d1: D1Database,
+  files: R2Bucket,
   writerKind: string,
   requestId = crypto.randomUUID(),
   ttlMs = DEFAULT_LEASE_TTL_MS,
 ): Promise<WriteLease> {
+  await requireAuthorityOpen(files);
   const startedAt = new Date().toISOString();
   const expiresAt = new Date(Date.now() + Math.max(1_000, ttlMs)).toISOString();
   const row = await d1
@@ -118,10 +123,18 @@ export async function acquireWriteLease(
       expires_at: string;
     }>();
   if (!row) throw new MaintenanceModeError();
-  return toLease(row);
+  const lease = toLease(row);
+  try {
+    await requireAuthorityOpen(files);
+  } catch (error) {
+    await releaseWriteLease(d1, lease, "failed").catch(() => undefined);
+    throw error;
+  }
+  return lease;
 }
 
-export async function assertWriteLeaseActive(d1: D1Database, lease: Pick<WriteLease, "id" | "generation">, now = new Date().toISOString()) {
+export async function assertWriteLeaseActive(d1: D1Database, files: R2Bucket, lease: Pick<WriteLease, "id" | "generation">, now: string = new Date().toISOString()) {
+  await requireAuthorityOpen(files);
   const row = await d1
     .prepare(
       `SELECT l.id
@@ -135,7 +148,8 @@ export async function assertWriteLeaseActive(d1: D1Database, lease: Pick<WriteLe
   if (!row) throw new MaintenanceModeError();
 }
 
-export async function renewWriteLease(d1: D1Database, lease: Pick<WriteLease, "id" | "generation">, ttlMs = DEFAULT_LEASE_TTL_MS) {
+export async function renewWriteLease(d1: D1Database, lease: Pick<WriteLease, "id" | "generation">, files: R2Bucket, ttlMs = DEFAULT_LEASE_TTL_MS) {
+  await requireAuthorityOpen(files);
   const renewedAt = new Date().toISOString();
   const expiresAt = new Date(Date.now() + Math.max(1_000, ttlMs)).toISOString();
   const result = await d1
@@ -158,16 +172,16 @@ export async function releaseWriteLease(d1: D1Database, lease: Pick<WriteLease, 
     .run();
 }
 
-export async function withWriteLease<T>(d1: D1Database, writerKind: string, callback: (lease: WriteLease) => Promise<T>, requestId?: string) {
-  const lease = await acquireWriteLease(d1, writerKind, requestId);
+export async function withWriteLease<T>(d1: D1Database, files: R2Bucket, writerKind: string, callback: (lease: WriteLease) => Promise<T>, requestId?: string) {
+  const lease = await acquireWriteLease(d1, files, writerKind, requestId);
   let renewalError: unknown;
   const renewalTimer = setInterval(() => {
-    void renewWriteLease(d1, lease).catch((error) => {
+    void renewWriteLease(d1, lease, files).catch((error) => {
       renewalError ??= error;
     });
   }, Math.max(1_000, Math.floor(DEFAULT_LEASE_TTL_MS / 3)));
   try {
-    await assertWriteLeaseActive(d1, lease);
+    await assertWriteLeaseActive(d1, files, lease);
     const result = await callback(lease);
     if (renewalError) throw renewalError;
     return result;
@@ -183,7 +197,9 @@ export async function withWriteLease<T>(d1: D1Database, writerKind: string, call
 export async function enterMaintenance(
   d1: D1Database,
   input: { reason: string; operatorEmail: string; timeoutMs?: number },
+  files: R2Bucket,
 ) {
+  await enterMaintenanceAuthority(files, input);
   const now = new Date().toISOString();
   const result = await d1
     .prepare(
@@ -203,42 +219,57 @@ export async function enterMaintenance(
   const state = await getState(d1);
   while (true) {
     const activeWriters = await activeWritersFor(d1, state.generation);
-    if (!activeWriters.length) return getMaintenanceStatus(d1);
+    if (!activeWriters.length) return getMaintenanceStatus(d1, files);
     if (Date.now() >= deadline) throw new MaintenanceDrainTimeoutError(activeWriters);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
 
-export async function reopenMaintenance(d1: D1Database, operatorEmail: string) {
-  const currentState = await getState(d1);
+export async function reopenMaintenance(d1: D1Database, operatorEmail: string, files: R2Bucket) {
   // A request that observed open must never reopen a later maintenance window.
-  if (currentState.mode === "open") return getMaintenanceStatus(d1);
+  const authority = await readMaintenanceAuthority(files);
+  const currentState = await getState(d1);
+  if (authority.mode === "open" && currentState.mode === "open") return getMaintenanceStatus(d1, files);
   const activeWriters = await allActiveWriters(d1);
-  if (activeWriters.length) throw new MaintenanceDrainTimeoutError(activeWriters);
+  if (activeWriters.length) {
+    if (currentState.mode === "open") return getMaintenanceStatus(d1, files);
+    throw new MaintenanceDrainTimeoutError(activeWriters);
+  }
   const now = new Date().toISOString();
-  const result = await d1
-    .prepare(
-      `UPDATE maintenance_state
-       SET mode = 'open', generation = generation + 1, reason = '', operator_email = ?, activated_at = NULL, updated_at = ?
-       WHERE id = 1 AND mode = 'maintenance' AND generation = ?
-         AND NOT EXISTS (SELECT 1 FROM write_leases WHERE outcome IS NULL)`,
-    )
-    .bind(operatorEmail.slice(0, 320), now, currentState.generation)
-    .run();
-  if (Number(result.meta.changes ?? 0) !== 1) {
-    const latestState = await getState(d1);
-    if (latestState.mode !== "maintenance" || latestState.generation !== currentState.generation) {
+  if (currentState.mode === "maintenance") {
+    const result = await d1
+      .prepare(
+        `UPDATE maintenance_state
+         SET mode = 'open', generation = generation + 1, reason = '', operator_email = ?, activated_at = NULL, updated_at = ?
+         WHERE id = 1 AND mode = 'maintenance' AND generation = ?
+           AND NOT EXISTS (SELECT 1 FROM write_leases WHERE outcome IS NULL)`,
+      )
+      .bind(operatorEmail.slice(0, 320), now, currentState.generation)
+      .run();
+    if (Number(result.meta.changes ?? 0) !== 1) {
+      const latestState = await getState(d1);
+      if (latestState.mode !== "maintenance" || latestState.generation !== currentState.generation) {
+        throw new MaintenanceStateConflictError();
+      }
+      const unresolvedWriters = await allActiveWriters(d1);
+      if (unresolvedWriters.length) throw new MaintenanceDrainTimeoutError(unresolvedWriters);
+      // Do not retry a failed transition against state that changed again.
       throw new MaintenanceStateConflictError();
     }
-    const unresolvedWriters = await allActiveWriters(d1);
-    if (unresolvedWriters.length) throw new MaintenanceDrainTimeoutError(unresolvedWriters);
-    // Do not retry a failed transition against state that changed again.
-    throw new MaintenanceStateConflictError();
+  }
+  try {
+    await reopenMaintenanceAuthority(files, operatorEmail, authority.revision);
+  } catch (error) {
+    if ((error as { code?: string })?.code === "MAINTENANCE_AUTHORITY_CONFLICT") {
+      if (currentState.mode === "open") return getMaintenanceStatus(d1, files);
+      throw new MaintenanceStateConflictError();
+    }
+    throw error;
   }
   await d1.prepare("INSERT INTO audit_log (actor_email, action, entity_type, entity_id, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)")
     .bind(operatorEmail, "reopen", "maintenance", "1", "{}", now)
     .run();
-  return getMaintenanceStatus(d1);
+  return getMaintenanceStatus(d1, files);
 }
 
 export function maintenanceResponse(error: MaintenanceModeError = new MaintenanceModeError()) {
@@ -248,18 +279,23 @@ export function maintenanceResponse(error: MaintenanceModeError = new Maintenanc
   );
 }
 
-export async function assertRequestWriteLease(d1: D1Database, request: Request) {
+export async function assertRequestWriteLease(d1: D1Database, files: R2Bucket, request: Request) {
   const id = request.headers.get(WRITE_LEASE_ID_HEADER);
   const generationValue = request.headers.get(WRITE_LEASE_GENERATION_HEADER);
   const generation = generationValue ? Number(generationValue) : NaN;
   if (!id || !Number.isInteger(generation)) throw new MaintenanceModeError("La escritura no tiene un lease de mantenimiento válido.");
-  await assertWriteLeaseActive(d1, { id, generation });
+  await assertWriteLeaseActive(d1, files, { id, generation });
 }
 
 async function getState(d1: D1Database) {
   const state = await d1.prepare("SELECT id, mode, generation, reason, operator_email, activated_at, updated_at FROM maintenance_state WHERE id = 1").first<StateRow>();
   if (!state) throw new Error("WRITE_BARRIER_UNINITIALIZED");
   return state;
+}
+
+async function requireAuthorityOpen(files: R2Bucket) {
+  const authority = await readMaintenanceAuthority(files);
+  if (authority.mode !== "open") throw new MaintenanceModeError();
 }
 
 async function activeWritersFor(d1: D1Database, generation: number) {

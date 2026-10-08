@@ -4,6 +4,7 @@ import { Repository } from "../app/lib/prospecting/repository";
 import { defaultPolicy } from "../app/lib/prospecting/domain";
 import type { BusinessFacts, Context, TenantPolicy } from "../app/lib/prospecting/contracts";
 import type { RuntimeSwitches } from "../app/lib/prospecting/service";
+import type { R2Bucket } from "@cloudflare/workers-types";
 export const context: Context = { tenantId: "hidaca", actor: "operator@example.com", role: "admin", requestId: "request-fixture" };
 export const switches: RuntimeSwitches = { PROSPECTING_TENANT_ALLOWLIST: "hidaca,other", PROSPECTING_DISCOVERY_ENABLED: "true", PROSPECTING_ENRICHMENT_ENABLED: "true", PROSPECTING_SCORING_ENABLED: "true", PROSPECTING_AUDIT_ENABLED: "true", PROSPECTING_CRM_ENABLED: "true" };
 export const facts: BusinessFacts = { name: "Constructora Ejemplo", address: "Av. Principal 42, Santo Domingo", latitude: 18.4861, longitude: -69.9312, phone: "+1 809 555 0101", website: "https://example.com/", domain: "example.com", categories: ["general_contractor"], placeId: "ChIJ-fixture-1", mapsUrl: "https://maps.google.com/?cid=123", rating: 4.2, reviewCount: 10, attributions: [] };
@@ -48,5 +49,26 @@ export function database() {
   const repo = new Repository(binding);
   sqlite.prepare("INSERT INTO staff_users(email,name,role,active,created_at,updated_at) VALUES(?,?,'admin',1,?,?)").run(context.actor, "Test Operator", new Date().toISOString(), new Date().toISOString());
   for (const tenant of ["hidaca", "other"]) sqlite.prepare("INSERT INTO pi_policies(tenant_id,version,policy,actor,created_at,updated_at) VALUES(?,?,?,?,?,?)").run(tenant, "1", JSON.stringify(testPolicy()), context.actor, new Date().toISOString(), new Date().toISOString());
-  return { sqlite, binding, repo };
+  return { sqlite, binding, repo, files: maintenanceBucket() };
+}
+
+export function maintenanceBucket(initialMode: "open" | "maintenance" = "open") {
+  const key = "__control/maintenance-state.v1.json";
+  let etag = "fixture-1";
+  let value = { schemaVersion: 1, revision: 1, mode: initialMode, reason: "", operatorEmail: "fixture", activatedAt: null, updatedAt: new Date().toISOString() };
+  const bucket = {
+    async get(name: string) {
+      if (name !== key) return null;
+      const serialized = JSON.stringify(value);
+      return { etag, async json<T>() { return JSON.parse(serialized) as T; } };
+    },
+    async put(name: string, body: string, options?: { onlyIf?: { etagMatches?: string } }) {
+      if (name !== key) throw new Error("unexpected maintenance key");
+      if (options?.onlyIf?.etagMatches && options.onlyIf.etagMatches !== etag) return null;
+      value = JSON.parse(body);
+      etag = `fixture-${Number(etag.slice("fixture-".length)) + 1}`;
+      return { etag };
+    },
+  };
+  return bucket as unknown as R2Bucket;
 }

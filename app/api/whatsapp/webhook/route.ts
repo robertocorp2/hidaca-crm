@@ -29,9 +29,9 @@ export async function POST(request: Request) {
   const canonicalEventHash = await hashBody(eventIdentity ?? rawBody);
   const d1 = getD1();
   try {
-    await assertRequestWriteLease(d1, request);
+    await assertRequestWriteLease(d1, env.FILES, request);
   } catch (error) {
-    if (error instanceof MaintenanceModeError) return maintenanceResponse(error);
+    if (error instanceof MaintenanceModeError || (error as { code?: string })?.code === "MAINTENANCE_AUTHORITY_UNAVAILABLE") return maintenanceResponse();
     throw error;
   }
   const eventHash = await resolveWhatsAppWebhookEventHash(d1, canonicalEventHash, legacyEventHash);

@@ -34,9 +34,9 @@ export default gateway;
 
 async function receiveWithBarrier(request: Request, env: GatewayEnv, operation: string) {
   try {
-    return await withWriteLease(env.DB, "ecf-gateway", (lease) => receive(request, env, operation, lease));
+    return await withWriteLease(env.DB, env.FILES, "ecf-gateway", (lease) => receive(request, env, operation, lease));
   } catch (error) {
-    if (error instanceof MaintenanceModeError) return maintenanceResponse(error);
+    if (error instanceof MaintenanceModeError || (error as { code?: string })?.code === "MAINTENANCE_AUTHORITY_UNAVAILABLE") return maintenanceResponse();
     throw error;
   }
 }
@@ -50,9 +50,9 @@ async function receive(request: Request, env: GatewayEnv, operation: string, lea
   const issuerRnc = tag(body, "RNCEmisor");
   const id = crypto.randomUUID();
   const key = `ecf-gateway/inbound/${new Date().toISOString().slice(0, 10)}/${id}.xml`;
-  await assertWriteLeaseActive(env.DB, lease);
+  await assertWriteLeaseActive(env.DB, env.FILES, lease);
   await env.FILES.put(key, new TextEncoder().encode(body), { httpMetadata: { contentType: "application/xml" } });
-  await assertWriteLeaseActive(env.DB, lease);
+  await assertWriteLeaseActive(env.DB, env.FILES, lease);
   await env.DB.prepare("INSERT INTO ecf_inbound_messages (id, environment, operation, issuer_rnc, encf, outcome, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(id, "test", operation, issuerRnc, encf, "received_pending_validation", new Date().toISOString()).run();
   if (operation === "approval") return xml(`<ACECF><DetalleAprobacionComercial><eNCF>${escapeXml(encf)}</eNCF><Estado>0</Estado></DetalleAprobacionComercial></ACECF>`);
   return xml(`<ARECF><DetalleAcusederecibo><Version>1.0</Version><RNCEmisor>${escapeXml(issuerRnc)}</RNCEmisor><eNCF>${escapeXml(encf)}</eNCF><Estado>0</Estado><FechaHoraAcuseRecibo>${new Date().toISOString()}</FechaHoraAcuseRecibo></DetalleAcusederecibo></ARECF>`);
