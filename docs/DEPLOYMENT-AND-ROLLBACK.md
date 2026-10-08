@@ -107,6 +107,14 @@ objects, and post-snapshot samples from each blob-backed table plus `audit_log`.
 Backup objects under `backups/` remain explicit rollback evidence and are not
 classified as orphaned by this check. An incomplete R2 listing is always an
 abort condition.
+The exact `__control/maintenance-state.v1.json` object is reported separately:
+it must be present, valid, and in maintenance mode. It may be newer than the snapshot because entering
+maintenance updates it. Other R2 objects retain the post-snapshot and orphan
+checks.
+The reconciliation also verifies each recorded ECF inbound XML key, flags
+legacy inbound rows without an object key, and reports unresolved webhook,
+campaign, and prospecting jobs. Any such finding keeps maintenance closed
+until an operator reconciles the external side effect or missing object.
 
 Time Travel restore is destructive to writes made after the selected point.
 It therefore requires explicit production approval and a verified timestamp.

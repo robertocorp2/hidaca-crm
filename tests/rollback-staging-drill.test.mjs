@@ -4,11 +4,12 @@ import test from "node:test";
 import { DrillFailure, runDrill, validateBaseUrl, validateReconciliation } from "../scripts/rollback-staging-drill.mjs";
 
 function cleanReconciliation() {
+  const postSnapshot = Object.fromEntries(["documents", "importFiles", "ecfArtifacts", "ecfInboundMessages", "voiceRecordings", "whatsappMessages", "whatsappWebhookEvents", "whatsappCampaignRecipients", "whatsappCampaignDeliveryAttempts", "prospectingJobs", "auditLog"].map((name) => [name, { count: 0, sample: [] }]));
   return {
     snapshotAt: "2026-09-18T18:00:00.000Z",
     checkedAt: "2026-09-18T18:01:00.000Z",
-    d1: { referencedObjectCount: 0, postSnapshot: { documents: { count: 0, sample: [] } }, maintenanceEntryAudit: { count: 0, sample: [] } },
-    r2: { inventoryComplete: true, objectCount: 0, manifestSha256: "a".repeat(64), postSnapshotObjects: [], missingReferencedObjects: [], orphanedObjects: [] },
+    d1: { referencedObjectCount: 0, postSnapshot, maintenanceEntryAudit: { count: 0, sample: [] }, untrackedInboundMessages: { count: 0, sample: [] }, unresolvedWriters: { whatsappWebhooks: { count: 0, sample: [] }, whatsappCampaigns: { count: 0, sample: [] }, prospectingJobs: { count: 0, sample: [] } } },
+    r2: { inventoryComplete: true, objectCount: 1, manifestSha256: "a".repeat(64), maintenanceAuthority: { present: true, mode: "maintenance", revision: 2, updatedAfterSnapshot: true }, postSnapshotObjects: [], missingReferencedObjects: [], orphanedObjects: [] },
   };
 }
 
@@ -113,6 +114,31 @@ test("local redirects are rejected before a second request", async () => {
 
 test("reconciliation validator rejects incomplete inventory", () => {
   assert.throws(() => validateReconciliation({ ...cleanReconciliation(), r2: { ...cleanReconciliation().r2, inventoryComplete: false } }), /not clean/i);
+});
+
+test("reconciliation validator rejects a missing maintenance authority", () => {
+  const clean = cleanReconciliation();
+  assert.throws(() => validateReconciliation({ ...clean, r2: { ...clean.r2, maintenanceAuthority: { present: false, mode: null, revision: null, updatedAfterSnapshot: false } } }), /not clean/i);
+  assert.throws(() => validateReconciliation({ ...clean, r2: { ...clean.r2, maintenanceAuthority: { present: true, mode: "open", revision: 3, updatedAfterSnapshot: true } } }), /not clean/i);
+});
+
+test("reconciliation validator rejects an inbound XML row without a durable object key", () => {
+  const clean = cleanReconciliation();
+  assert.throws(() => validateReconciliation({ ...clean, d1: { ...clean.d1, untrackedInboundMessages: { count: 1, sample: [{ id: "inbound-1", created_at: clean.snapshotAt }] } } }), /not clean/i);
+});
+
+test("reconciliation validator rejects omitted or null post-snapshot evidence", () => {
+  const clean = cleanReconciliation();
+  const { documents, ...withoutDocuments } = clean.d1.postSnapshot;
+  assert.ok(documents);
+  assert.throws(() => validateReconciliation({ ...clean, d1: { ...clean.d1, postSnapshot: withoutDocuments } }), /not clean/i);
+  assert.throws(() => validateReconciliation({ ...clean, d1: { ...clean.d1, postSnapshot: { ...clean.d1.postSnapshot, voiceRecordings: { count: null, sample: [] } } } }), /not clean/i);
+  assert.throws(() => validateReconciliation({ ...clean, d1: { ...clean.d1, untrackedInboundMessages: { count: null, sample: [] } } }), /not clean/i);
+});
+
+test("reconciliation validator keeps maintenance closed for unresolved background writers", () => {
+  const clean = cleanReconciliation();
+  assert.throws(() => validateReconciliation({ ...clean, d1: { ...clean.d1, unresolvedWriters: { ...clean.d1.unresolvedWriters, prospectingJobs: { count: 1, sample: [{ id: "job-1", created_at: clean.snapshotAt }] } } } }), /not clean/i);
 });
 
 test("reconciliation accepts one maintenance-entry audit but rejects a second entry", () => {

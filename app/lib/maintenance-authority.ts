@@ -1,4 +1,5 @@
-const KEY = "__control/maintenance-state.v1.json";
+export const MAINTENANCE_AUTHORITY_KEY = "__control/maintenance-state.v1.json";
+const KEY = MAINTENANCE_AUTHORITY_KEY;
 const MAX_CAS_ATTEMPTS = 8;
 
 export type MaintenanceBucket = {
@@ -32,7 +33,7 @@ export class MaintenanceAuthorityConflictError extends Error {
   }
 }
 
-export async function readMaintenanceAuthority(bucket: MaintenanceBucket): Promise<MaintenanceAuthority> {
+export async function readMaintenanceAuthority(bucket: Pick<MaintenanceBucket, "get">): Promise<MaintenanceAuthority> {
   try {
     const object = await bucket.get(KEY);
     if (!object) throw new MaintenanceAuthorityUnavailableError("The authoritative maintenance control is not initialized; writes are paused.");

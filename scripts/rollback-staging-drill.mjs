@@ -37,16 +37,20 @@ export function validateBaseUrl(value) {
 export function validateReconciliation(reconciliation) {
   const r2 = reconciliation?.r2;
   const postSnapshot = reconciliation?.d1?.postSnapshot;
-  const postSnapshotRows = Object.values(postSnapshot ?? {});
+  const requiredPostSnapshot = ["documents", "importFiles", "ecfArtifacts", "ecfInboundMessages", "voiceRecordings", "whatsappMessages", "whatsappWebhookEvents", "whatsappCampaignRecipients", "whatsappCampaignDeliveryAttempts", "prospectingJobs", "auditLog"];
   const maintenanceEntryAudit = reconciliation?.d1?.maintenanceEntryAudit;
+  const untrackedInboundMessages = reconciliation?.d1?.untrackedInboundMessages;
+  const unresolvedWriters = reconciliation?.d1?.unresolvedWriters;
   const failures = [];
   if (r2?.inventoryComplete !== true) failures.push("R2 inventory is incomplete");
+  if (r2?.maintenanceAuthority?.present !== true || r2?.maintenanceAuthority?.mode !== "maintenance") failures.push("R2 maintenance authority is missing or not closed");
+  if (!Array.isArray(r2?.missingReferencedObjects) || !Array.isArray(r2?.orphanedObjects) || !Array.isArray(r2?.postSnapshotObjects)) failures.push("R2 reconciliation evidence is incomplete");
+  if (!postSnapshot || requiredPostSnapshot.some((name) => !Number.isInteger(postSnapshot[name]?.count) || postSnapshot[name].count !== 0 || !Array.isArray(postSnapshot[name].sample) || postSnapshot[name].sample.length !== 0)) failures.push("D1 post-snapshot evidence is incomplete or contains rows");
   if ((r2?.missingReferencedObjects ?? []).length) failures.push("R2 references are missing");
   if ((r2?.orphanedObjects ?? []).length) failures.push("R2 contains unexpected orphaned objects");
   if ((r2?.postSnapshotObjects ?? []).length) failures.push("R2 contains post-snapshot objects");
-  if (postSnapshotRows.some((entry) => Number(entry?.count ?? 0) !== 0 || (entry?.sample ?? []).length)) {
-    failures.push("D1 contains post-snapshot rows");
-  }
+  if (!Number.isInteger(untrackedInboundMessages?.count) || untrackedInboundMessages.count !== 0 || !Array.isArray(untrackedInboundMessages.sample) || untrackedInboundMessages.sample.length !== 0) failures.push("ECF inbound messages lack durable R2 references");
+  if (!unresolvedWriters || ["whatsappWebhooks", "whatsappCampaigns", "prospectingJobs"].some((name) => !Number.isInteger(unresolvedWriters[name]?.count) || unresolvedWriters[name].count !== 0 || !Array.isArray(unresolvedWriters[name].sample) || unresolvedWriters[name].sample.length !== 0)) failures.push("Webhook, campaign, or background writers remain unresolved");
   // A drill taken before restore can retain its own entry audit. Any extra
   // entry is an unexpected control transition and must keep writes closed.
   if (!maintenanceEntryAudit || !Number.isInteger(maintenanceEntryAudit.count)

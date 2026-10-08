@@ -53,7 +53,7 @@ async function receive(request: Request, env: GatewayEnv, operation: string, lea
   await assertWriteLeaseActive(env.DB, env.FILES, lease);
   await env.FILES.put(key, new TextEncoder().encode(body), { httpMetadata: { contentType: "application/xml" } });
   await assertWriteLeaseActive(env.DB, env.FILES, lease);
-  await env.DB.prepare("INSERT INTO ecf_inbound_messages (id, environment, operation, issuer_rnc, encf, outcome, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(id, "test", operation, issuerRnc, encf, "received_pending_validation", new Date().toISOString()).run();
+  await env.DB.prepare("INSERT INTO ecf_inbound_messages (id, environment, operation, issuer_rnc, encf, object_key, outcome, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(id, "test", operation, issuerRnc, encf, key, "received_pending_validation", new Date().toISOString()).run();
   if (operation === "approval") return xml(`<ACECF><DetalleAprobacionComercial><eNCF>${escapeXml(encf)}</eNCF><Estado>0</Estado></DetalleAprobacionComercial></ACECF>`);
   return xml(`<ARECF><DetalleAcusederecibo><Version>1.0</Version><RNCEmisor>${escapeXml(issuerRnc)}</RNCEmisor><eNCF>${escapeXml(encf)}</eNCF><Estado>0</Estado><FechaHoraAcuseRecibo>${new Date().toISOString()}</FechaHoraAcuseRecibo></DetalleAcusederecibo></ARECF>`);
 }

@@ -14,6 +14,7 @@ import {
   withWriteLease,
 } from "../app/lib/write-barrier";
 import { reconcileRollback } from "../app/lib/rollback-reconciliation";
+import ecfGateway from "../worker/ecf-gateway";
 
 test("production writer entry points stay behind the shared barrier", async () => {
   const [worker, gateway, scheduled, webhook] = await Promise.all([
@@ -154,21 +155,26 @@ test("missing authoritative maintenance state fails closed", async () => {
 });
 
 test("rollback reconciliation reports missing, orphaned, and post-snapshot evidence", async () => {
-  const { binding, sqlite, files } = database();
+  const { binding, sqlite } = database();
   try {
     sqlite.prepare("INSERT INTO documents (id,name,object_key,content_type,size,created_by,created_at) VALUES (?,?,?,?,?,?,?)").run("document-1", "Evidence", "documents/missing.pdf", "application/pdf", 10, "admin@example.com", "2026-09-14T03:00:00.000Z");
     sqlite.prepare("INSERT INTO audit_log (actor_email,action,entity_type,entity_id,detail,created_at) VALUES (?,?,?,?,?,?)").run("admin@example.com", "upload", "document", "document-1", "", "2026-09-14T05:00:00.000Z");
+    sqlite.prepare("INSERT INTO whatsapp_webhook_events (event_hash,event_type,processing_status,received_at) VALUES (?,?,?,?)").run("rollback-event", "message", "processing", "2026-09-14T03:00:00.000Z");
     const report = await reconcileRollback(binding, {
+      async get() { return { etag: "test", async json<T>() { return { schemaVersion: 1, revision: 2, mode: "maintenance", reason: "drill", operatorEmail: "admin@example.com", activatedAt: "2026-09-14T04:00:01.000Z", updatedAt: "2026-09-14T04:00:01.000Z" } as T; } }; },
       async list() {
-        return { objects: [{ key: "documents/missing.pdf" }, { key: "unexpected/file.bin", uploaded: "2026-09-14T05:00:00.000Z" }, { key: "backups/restore-proof.json" }], truncated: false };
+        return { objects: [{ key: "documents/missing.pdf" }, { key: "unexpected/file.bin", uploaded: "2026-09-14T05:00:00.000Z" }, { key: "backups/restore-proof.json" }, { key: "__control/maintenance-state.v1.json", uploaded: "2026-09-14T05:00:00.000Z" }], truncated: false };
       },
     }, "2026-09-14T04:00:00.000Z");
     assert.deepEqual(report.r2.missingReferencedObjects, []);
     assert.deepEqual(report.r2.orphanedObjects, ["unexpected/file.bin"]);
     assert.deepEqual(report.r2.postSnapshotObjects, ["unexpected/file.bin"]);
+    assert.deepEqual(report.r2.maintenanceAuthority, { present: true, mode: "maintenance", revision: 2, updatedAfterSnapshot: true });
     assert.match(report.r2.manifestSha256, /^[a-f0-9]{64}$/);
     assert.equal(report.d1.postSnapshot.auditLog.count, 1);
     assert.equal(report.d1.postSnapshot.auditLog.sample[0]?.id, "1");
+    assert.equal(report.d1.unresolvedWriters.whatsappWebhooks.count, 1);
+    assert.equal(report.d1.unresolvedWriters.whatsappWebhooks.sample[0]?.id, "1");
   } finally {
     sqlite.close();
   }
@@ -180,11 +186,60 @@ test("rollback reconciliation separates the drill's own maintenance-entry audit"
     const snapshotAt = new Date(Date.now() - 5_000).toISOString();
     await enterMaintenance(binding, { reason: "controlled staging drill", operatorEmail: "admin@example.com" }, files);
     const report = await reconcileRollback(binding, {
-      async list() { return { objects: [], truncated: false }; },
+      get: files.get.bind(files),
+      async list() { return { objects: [{ key: "__control/maintenance-state.v1.json", uploaded: new Date() }], truncated: false }; },
     }, snapshotAt);
     assert.equal(report.d1.postSnapshot.auditLog.count, 0);
     assert.equal(report.d1.maintenanceEntryAudit.count, 1);
     assert.equal(report.d1.maintenanceEntryAudit.sample.length, 1);
+    assert.deepEqual(report.r2.postSnapshotObjects, []);
+    assert.deepEqual(report.r2.orphanedObjects, []);
+    assert.equal(report.r2.maintenanceAuthority.present, true);
+    assert.equal(report.r2.maintenanceAuthority.mode, "maintenance");
+    assert.equal(report.r2.maintenanceAuthority.updatedAfterSnapshot, true);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("rollback reconciliation verifies ECF inbound XML references and rejects legacy untracked rows", async () => {
+  const { binding, sqlite, files } = database();
+  try {
+    const snapshotAt = new Date(Date.now() + 60_000).toISOString();
+    sqlite.prepare("INSERT INTO ecf_inbound_messages (id, environment, operation, object_key, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run("ecf-1", "test", "ecf", "ecf-gateway/inbound/test/ecf-1.xml", new Date().toISOString());
+    sqlite.prepare("INSERT INTO ecf_inbound_messages (id, environment, operation, created_at) VALUES (?, ?, ?, ?)")
+      .run("legacy-ecf", "test", "ecf", new Date().toISOString());
+    const report = await reconcileRollback(binding, {
+      get: files.get.bind(files),
+      async list() { return { objects: [{ key: "__control/maintenance-state.v1.json" }], truncated: false }; },
+    }, snapshotAt);
+    assert.deepEqual(report.r2.missingReferencedObjects, ["ecf-gateway/inbound/test/ecf-1.xml"]);
+    assert.equal(report.d1.untrackedInboundMessages.count, 1);
+    assert.equal(report.d1.untrackedInboundMessages.sample[0]?.id, "legacy-ecf");
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("ECF gateway persists the inbound XML key alongside its D1 row", async () => {
+  const { binding, sqlite, files } = database();
+  const objects = new Map<string, string>();
+  const bucket = {
+    get: files.get.bind(files),
+    async put(key: string, body: string | Uint8Array, options?: { onlyIf?: { etagMatches: string } }) {
+      if (key === "__control/maintenance-state.v1.json") return files.put(key, String(body), options as Parameters<MaintenanceBucket["put"]>[2]);
+      objects.set(key, new TextDecoder().decode(body instanceof Uint8Array ? body : new TextEncoder().encode(body)));
+      return { etag: "test-object" };
+    },
+  } as unknown as R2Bucket;
+  try {
+    const xml = "<ECF><eNCF>E310000000001</eNCF><RNCEmisor>101010101</RNCEmisor><Signature>test</Signature></ECF>";
+    const response = await ecfGateway.fetch(new Request("https://ecf-staging.example.test/fe/recepcion/api/ecf", { method: "POST", body: xml }), { DB: binding, FILES: bucket, ECF_GATEWAY_ENABLED: "true" });
+    assert.equal(response.status, 200);
+    const row = sqlite.prepare("SELECT id, object_key FROM ecf_inbound_messages").get() as { id: string; object_key: string };
+    assert.ok(row.object_key.endsWith(`/${row.id}.xml`));
+    assert.equal(objects.get(row.object_key), xml);
   } finally {
     sqlite.close();
   }

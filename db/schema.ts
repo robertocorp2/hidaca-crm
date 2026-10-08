@@ -2080,6 +2080,7 @@ export const ecfInboundMessages = sqliteTable(
     operation: text("operation").notNull(),
     issuerRnc: text("issuer_rnc").notNull().default(""),
     encf: text("encf").notNull().default(""),
+    objectKey: text("object_key"),
     messageArtifactId: text("message_artifact_id").references(() => ecfArtifacts.id, { onDelete: "restrict" }),
     responseArtifactId: text("response_artifact_id").references(() => ecfArtifacts.id, { onDelete: "restrict" }),
     outcome: text("outcome").notNull().default("received"),
