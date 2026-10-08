@@ -1,7 +1,5 @@
 import { asc, eq } from "drizzle-orm";
-import { env } from "cloudflare:workers";
-import { getDb } from "../../../../../db";
-import { getD1 } from "../../../../../db";
+import { getDb, getD1, getFiles } from "../../../../../db";
 import { whatsappConversations, whatsappMessages } from "../../../../../db/schema";
 import { authorizeApi } from "../../../../lib/authorization";
 import { markWhatsAppMessageRead } from "../../../../lib/whatsapp";
@@ -21,7 +19,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const metaMessageId = latestInbound.metaMessageId;
     try {
       // GET has read-receipt side effects, so the method-based Worker gate is insufficient.
-      await withWriteLease(d1, env.FILES, "whatsapp-conversation-read", async () => {
+      await withWriteLease(d1, getFiles(), "whatsapp-conversation-read", async () => {
         await db.update(whatsappConversations).set({ unreadCount: 0, updatedAt: new Date().toISOString() }).where(eq(whatsappConversations.id, id));
         await d1.prepare("INSERT INTO whatsapp_conversation_reads (conversation_id,user_id,last_read_message_id,last_read_at) VALUES (?, ?, ?, ?) ON CONFLICT(conversation_id,user_id) DO UPDATE SET last_read_message_id=excluded.last_read_message_id,last_read_at=excluded.last_read_at").bind(id, auth.user.staffUserId, latestInbound.id, new Date().toISOString()).run();
         await d1.prepare("INSERT INTO audit_log (actor_email,action,entity_type,entity_id,detail,created_at) VALUES (?, 'read', 'whatsapp_conversation', ?, 'inbound messages marked read', ?)").bind(auth.user.email, id, new Date().toISOString()).run();

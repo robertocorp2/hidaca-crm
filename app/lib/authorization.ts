@@ -1,6 +1,5 @@
 import { eq } from "drizzle-orm";
-import { env } from "cloudflare:workers";
-import { getD1, getDb } from "../../db";
+import { getD1, getDb, getFiles } from "../../db";
 import { rolePermissions, staffUsers, userPermissionOverrides } from "../../db/schema";
 import {
   isPermissionModuleKey, permissionActions, type EffectivePermissions,
@@ -56,7 +55,7 @@ async function resolveAuthorizedUser(user: ChatGPTUser): Promise<AuthorizedUser 
   // Existing (including disabled) users are a pure read, even during maintenance.
   if (!staff && email === INITIAL_OWNER_EMAIL) {
     try {
-      await withWriteLease(getD1(), env.FILES, "authorization-owner-bootstrap", async () => {
+      await withWriteLease(getD1(), getFiles(), "authorization-owner-bootstrap", async () => {
         const now = new Date().toISOString();
         await db.insert(staffUsers).values({
           email, name: user.fullName ?? user.displayName, role: "admin", active: true,

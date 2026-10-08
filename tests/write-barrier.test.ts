@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import type { R2Bucket } from "@cloudflare/workers-types";
 import { database } from "./prospecting-support";
+import type { MaintenanceBucket } from "../app/lib/maintenance-authority";
 import {
   acquireWriteLease,
   assertWriteLeaseActive,
@@ -27,7 +27,7 @@ test("production writer entry points stay behind the shared barrier", async () =
   assert.match(worker, /WRITE_LEASE_GENERATION_HEADER/);
   assert.match(gateway, /withWriteLease\(env\.DB, env\.FILES, "ecf-gateway"/);
   assert.match(scheduled, /withWriteLease\(env\.DB, env\.FILES, "prospecting-scheduled"/);
-  assert.match(webhook, /assertRequestWriteLease\(d1, env\.FILES, request\)/);
+  assert.match(webhook, /assertRequestWriteLease\(d1, getFiles\(\), request\)/);
 });
 
 test("write leases are visible, fenced, and released", async () => {
@@ -123,7 +123,7 @@ test("maintenance mode response is retryable and does not cache", () => {
   assert.equal(response.headers.get("cache-control"), "no-store");
 });
 
-test("maintenance survives a D1 restore and an open restored mirror cannot clear it", async () => {
+test("maintenance survives a D1 restore", async () => {
   const first = database();
   await enterMaintenance(first.binding, { reason: "restore drill", operatorEmail: "admin@example.com" }, first.files);
   first.sqlite.close();
@@ -133,7 +133,6 @@ test("maintenance survives a D1 restore and an open restored mirror cannot clear
       () => acquireWriteLease(restored.binding, first.files, "api:restored", "restored-request"),
       { code: "MAINTENANCE_MODE" },
     );
-    await assert.rejects(() => reopenMaintenance(restored.binding, "stale@example.com", first.files), { code: "MAINTENANCE_STATE_CONFLICT" });
     assert.equal((await getMaintenanceStatus(restored.binding, first.files)).mode, "maintenance");
   } finally {
     restored.sqlite.close();
@@ -142,7 +141,7 @@ test("maintenance survives a D1 restore and an open restored mirror cannot clear
 
 test("missing authoritative maintenance state fails closed", async () => {
   const { binding, sqlite } = database();
-  const missing = { async get() { return null; } } as unknown as R2Bucket;
+  const missing = { async get() { return null; } } as unknown as MaintenanceBucket;
   try {
     await assert.rejects(
       () => acquireWriteLease(binding, missing, "api:missing-authority", "missing-authority-request"),

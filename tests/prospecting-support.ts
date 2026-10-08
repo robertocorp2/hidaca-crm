@@ -4,7 +4,7 @@ import { Repository } from "../app/lib/prospecting/repository";
 import { defaultPolicy } from "../app/lib/prospecting/domain";
 import type { BusinessFacts, Context, TenantPolicy } from "../app/lib/prospecting/contracts";
 import type { RuntimeSwitches } from "../app/lib/prospecting/service";
-import type { R2Bucket } from "@cloudflare/workers-types";
+import type { MaintenanceBucket } from "../app/lib/maintenance-authority";
 export const context: Context = { tenantId: "hidaca", actor: "operator@example.com", role: "admin", requestId: "request-fixture" };
 export const switches: RuntimeSwitches = { PROSPECTING_TENANT_ALLOWLIST: "hidaca,other", PROSPECTING_DISCOVERY_ENABLED: "true", PROSPECTING_ENRICHMENT_ENABLED: "true", PROSPECTING_SCORING_ENABLED: "true", PROSPECTING_AUDIT_ENABLED: "true", PROSPECTING_CRM_ENABLED: "true" };
 export const facts: BusinessFacts = { name: "Constructora Ejemplo", address: "Av. Principal 42, Santo Domingo", latitude: 18.4861, longitude: -69.9312, phone: "+1 809 555 0101", website: "https://example.com/", domain: "example.com", categories: ["general_contractor"], placeId: "ChIJ-fixture-1", mapsUrl: "https://maps.google.com/?cid=123", rating: 4.2, reviewCount: 10, attributions: [] };
@@ -70,5 +70,5 @@ export function maintenanceBucket(initialMode: "open" | "maintenance" = "open") 
       return { etag };
     },
   };
-  return bucket as unknown as R2Bucket;
+  return bucket as unknown as MaintenanceBucket;
 }

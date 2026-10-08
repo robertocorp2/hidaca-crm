@@ -1,6 +1,6 @@
 import { and, eq, isNull, or } from "drizzle-orm";
 import type { D1Database } from "@cloudflare/workers-types";
-import { getD1, getDb } from "../../../../db";
+import { getD1, getDb, getFiles } from "../../../../db";
 import { contacts, leads, opportunities, whatsappConversations } from "../../../../db/schema";
 import { normalizePhone } from "../../../lib/crm";
 import { persistInboundWhatsAppMessage, renewWhatsAppWebhookClaim, resolveWhatsAppWebhookEventHash, runWhatsAppWebhookDelivery, updateWhatsAppDeliveryStatus, webhookClaimIsActive, type WhatsAppWebhookClaim, whatsappWebhookResponse } from "../../../lib/whatsapp-webhook";
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
   const canonicalEventHash = await hashBody(eventIdentity ?? rawBody);
   const d1 = getD1();
   try {
-    await assertRequestWriteLease(d1, env.FILES, request);
+    await assertRequestWriteLease(d1, getFiles(), request);
   } catch (error) {
     if (error instanceof MaintenanceModeError || (error as { code?: string })?.code === "MAINTENANCE_AUTHORITY_UNAVAILABLE") return maintenanceResponse();
     throw error;

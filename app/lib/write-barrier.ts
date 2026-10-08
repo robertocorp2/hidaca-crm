@@ -1,6 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types";
-import type { R2Bucket } from "@cloudflare/workers-types";
-import { enterMaintenanceAuthority, readMaintenanceAuthority, reopenMaintenanceAuthority } from "./maintenance-authority";
+import { enterMaintenanceAuthority, readMaintenanceAuthority, reopenMaintenanceAuthority, type MaintenanceBucket } from "./maintenance-authority";
 
 export const WRITE_LEASE_ID_HEADER = "x-hidaca-write-lease";
 export const WRITE_LEASE_GENERATION_HEADER = "x-hidaca-write-generation";
@@ -77,7 +76,7 @@ export class MaintenanceStateConflictError extends Error {
   }
 }
 
-export async function getMaintenanceStatus(d1: D1Database, files: R2Bucket): Promise<MaintenanceStatus> {
+export async function getMaintenanceStatus(d1: D1Database, files: MaintenanceBucket): Promise<MaintenanceStatus> {
   const authority = await readMaintenanceAuthority(files);
   const state = await getState(d1);
   const activeWriters = await allActiveWriters(d1);
@@ -95,7 +94,7 @@ export async function getMaintenanceStatus(d1: D1Database, files: R2Bucket): Pro
 
 export async function acquireWriteLease(
   d1: D1Database,
-  files: R2Bucket,
+  files: MaintenanceBucket,
   writerKind: string,
   requestId = crypto.randomUUID(),
   ttlMs = DEFAULT_LEASE_TTL_MS,
@@ -133,7 +132,7 @@ export async function acquireWriteLease(
   return lease;
 }
 
-export async function assertWriteLeaseActive(d1: D1Database, files: R2Bucket, lease: Pick<WriteLease, "id" | "generation">, now: string = new Date().toISOString()) {
+export async function assertWriteLeaseActive(d1: D1Database, files: MaintenanceBucket, lease: Pick<WriteLease, "id" | "generation">, now: string = new Date().toISOString()) {
   await requireAuthorityOpen(files);
   const row = await d1
     .prepare(
@@ -148,7 +147,7 @@ export async function assertWriteLeaseActive(d1: D1Database, files: R2Bucket, le
   if (!row) throw new MaintenanceModeError();
 }
 
-export async function renewWriteLease(d1: D1Database, lease: Pick<WriteLease, "id" | "generation">, files: R2Bucket, ttlMs = DEFAULT_LEASE_TTL_MS) {
+export async function renewWriteLease(d1: D1Database, lease: Pick<WriteLease, "id" | "generation">, files: MaintenanceBucket, ttlMs = DEFAULT_LEASE_TTL_MS) {
   await requireAuthorityOpen(files);
   const renewedAt = new Date().toISOString();
   const expiresAt = new Date(Date.now() + Math.max(1_000, ttlMs)).toISOString();
@@ -172,7 +171,7 @@ export async function releaseWriteLease(d1: D1Database, lease: Pick<WriteLease, 
     .run();
 }
 
-export async function withWriteLease<T>(d1: D1Database, files: R2Bucket, writerKind: string, callback: (lease: WriteLease) => Promise<T>, requestId?: string) {
+export async function withWriteLease<T>(d1: D1Database, files: MaintenanceBucket, writerKind: string, callback: (lease: WriteLease) => Promise<T>, requestId?: string) {
   const lease = await acquireWriteLease(d1, files, writerKind, requestId);
   let renewalError: unknown;
   const renewalTimer = setInterval(() => {
@@ -197,7 +196,7 @@ export async function withWriteLease<T>(d1: D1Database, files: R2Bucket, writerK
 export async function enterMaintenance(
   d1: D1Database,
   input: { reason: string; operatorEmail: string; timeoutMs?: number },
-  files: R2Bucket,
+  files: MaintenanceBucket,
 ) {
   await enterMaintenanceAuthority(files, input);
   const now = new Date().toISOString();
@@ -225,7 +224,7 @@ export async function enterMaintenance(
   }
 }
 
-export async function reopenMaintenance(d1: D1Database, operatorEmail: string, files: R2Bucket) {
+export async function reopenMaintenance(d1: D1Database, operatorEmail: string, files: MaintenanceBucket) {
   // A request that observed open must never reopen a later maintenance window.
   const authority = await readMaintenanceAuthority(files);
   const currentState = await getState(d1);
@@ -279,7 +278,7 @@ export function maintenanceResponse(error: MaintenanceModeError = new Maintenanc
   );
 }
 
-export async function assertRequestWriteLease(d1: D1Database, files: R2Bucket, request: Request) {
+export async function assertRequestWriteLease(d1: D1Database, files: MaintenanceBucket, request: Request) {
   const id = request.headers.get(WRITE_LEASE_ID_HEADER);
   const generationValue = request.headers.get(WRITE_LEASE_GENERATION_HEADER);
   const generation = generationValue ? Number(generationValue) : NaN;
@@ -293,7 +292,7 @@ async function getState(d1: D1Database) {
   return state;
 }
 
-async function requireAuthorityOpen(files: R2Bucket) {
+async function requireAuthorityOpen(files: MaintenanceBucket) {
   const authority = await readMaintenanceAuthority(files);
   if (authority.mode !== "open") throw new MaintenanceModeError();
 }

@@ -1,7 +1,10 @@
-import type { R2Bucket } from "@cloudflare/workers-types";
-
 const KEY = "__control/maintenance-state.v1.json";
 const MAX_CAS_ATTEMPTS = 8;
+
+export type MaintenanceBucket = {
+  get(key: string): Promise<{ etag: string; json<T>(): Promise<T> } | null>;
+  put(key: string, value: string, options: { onlyIf: { etagMatches: string }; httpMetadata?: { contentType: string } }): Promise<{ etag: string } | null>;
+};
 
 export type MaintenanceAuthority = {
   schemaVersion: 1;
@@ -29,7 +32,7 @@ export class MaintenanceAuthorityConflictError extends Error {
   }
 }
 
-export async function readMaintenanceAuthority(bucket: R2Bucket): Promise<MaintenanceAuthority> {
+export async function readMaintenanceAuthority(bucket: MaintenanceBucket): Promise<MaintenanceAuthority> {
   try {
     const object = await bucket.get(KEY);
     if (!object) throw new MaintenanceAuthorityUnavailableError("The authoritative maintenance control is not initialized; writes are paused.");
@@ -43,7 +46,7 @@ export async function readMaintenanceAuthority(bucket: R2Bucket): Promise<Mainte
 }
 
 export async function enterMaintenanceAuthority(
-  bucket: R2Bucket,
+  bucket: MaintenanceBucket,
   input: { reason: string; operatorEmail: string },
 ) {
   return updateAuthority(bucket, (current) => {
@@ -52,7 +55,7 @@ export async function enterMaintenanceAuthority(
   });
 }
 
-export async function reopenMaintenanceAuthority(bucket: R2Bucket, operatorEmail: string, expectedRevision: number) {
+export async function reopenMaintenanceAuthority(bucket: MaintenanceBucket, operatorEmail: string, expectedRevision: number) {
   return updateAuthority(bucket, (current) => {
     if (current.revision !== expectedRevision) throw new MaintenanceAuthorityConflictError();
     if (current.mode === "open") return current;
@@ -61,7 +64,7 @@ export async function reopenMaintenanceAuthority(bucket: R2Bucket, operatorEmail
   });
 }
 
-async function updateAuthority(bucket: R2Bucket, change: (current: MaintenanceAuthority) => MaintenanceAuthority) {
+async function updateAuthority(bucket: MaintenanceBucket, change: (current: MaintenanceAuthority) => MaintenanceAuthority) {
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
     let object;
     let current: MaintenanceAuthority;

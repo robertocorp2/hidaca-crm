@@ -33,9 +33,10 @@ remain because the previous release does not query them.
 
 ## Write barrier and maintenance mode
 
-Database rollback must use the D1-backed write barrier, not a code redeploy as
-the stop mechanism. The `maintenance_state` singleton is authoritative and
-the `write_leases` table records every active writer. The Sites Worker acquires
+Database rollback must use the R2-backed write barrier, not a code redeploy as
+the stop mechanism. The private `FILES` object
+`__control/maintenance-state.v1.json` is authoritative; D1 `maintenance_state`
+is only a local mirror, and D1 `write_leases` records active writers. The Sites Worker acquires
 a lease for every `POST`, `PUT`, `PATCH`, and `DELETE`, including `/v1` routes
 and the WhatsApp webhook. The independent ECF gateway and prospecting cron
 worker acquire leases separately. A lease generation is invalid after the
@@ -47,8 +48,8 @@ Authenticated administrators use these endpoints:
   writer identities.
 - `POST /api/maintenance/enter` with `{"reason":"rollback","timeoutMs":30000}`
   — advance the generation, reject new writes, and wait for existing leases.
-- `POST /api/maintenance/reopen` — advance the generation and reopen writes
-  only after restore and reconciliation succeed.
+- `POST /api/maintenance/reopen` — explicitly clear the R2 authority and
+  reopen writes only after restore and reconciliation succeed.
 
 Reopening compares the maintenance generation read by that request and checks
 for zero unresolved leases in the same database update. An already-open state
@@ -66,6 +67,15 @@ writer IDs and logs, and abort the restore until the writer finishes or the
 external client is stopped. Resolve an abandoned lease only after verifying
 that its request is no longer running. New mutations receive
 `503 MAINTENANCE_MODE` with `Retry-After: 60`.
+
+Before deploying code that reads the external authority, an operator must
+create `__control/maintenance-state.v1.json` in the private R2 bucket with
+`mode: "maintenance"`, verify every write-capable deployment uses the same
+`FILES` bucket, and keep the application paused. Startup never creates or
+defaults the control object to `open`. A normal D1 restore does not change this
+R2 object; missing, malformed, or unavailable authority keeps writes blocked.
+See [the maintenance authority rollout gate](maintenance-authority.md) for the
+object schema and ordered setup.
 
 ## Database rollback
 
@@ -116,22 +126,16 @@ snapshot, verify zero unexpected findings, reopen traffic, and repeat one
 authenticated read/write smoke check. Record the tested commit, migration,
 generation, timestamps, drain result, reconciliation JSON, and abort decisions.
 
-The repository includes a credential-free control-plane harness for this drill:
-`node scripts/rollback-staging-drill.mjs`. It sends the ChatGPT-authenticated
-operator headers from `HIDACA_STAGING_AUTH_EMAIL` (and the optional
-`HIDACA_STAGING_AUTH_FULL_NAME`), enters maintenance, polls for a zero-writer
-state, runs reconciliation with the operator-supplied `--snapshot-at` timestamp,
-and reopens traffic only when every reconciliation check is clean. It writes the
-evidence JSON to stdout, or to `--output <path>` when requested. The command
-requires `--base-url` (or `HIDACA_STAGING_URL`), a valid RFC3339
-`--snapshot-at`, and rejects the production hostname, including its trailing-dot
-absolute DNS spelling. HTTP redirects are rejected so operator headers and
-maintenance mutations cannot be forwarded to an unvalidated target. Supply the
-final, explicitly verified staging URL; a redirect failure is not permission to
-use a production URL or bypass authentication. Start the five writer
-probes described above before invoking it; the harness does not invent payloads
-or signatures for those external integrations. Any drain, request, or
-reconciliation failure leaves the barrier closed for operator investigation.
+The repository includes a **local-only test harness**, not an operational
+staging client. `scripts/rollback-staging-drill.mjs` has no CLI network mode,
+does not create identity headers, and accepts only a loopback test server. Its
+in-memory tests validate sequencing and abort behavior; they do not authenticate
+an operator or prove deployed recovery. Perform the real staging drill through
+the authenticated browser session after the staging hostname and shared D1/R2
+bindings are verified. Do not use request headers, environment variables, or
+CLI arguments to impersonate the platform-authenticated user. Any drain,
+request, or reconciliation failure must leave maintenance closed for operator
+investigation.
 
 If an explicitly approved structural rollback is required instead of Time
 Travel, validate the down scripts on a copy first and run them newest-first:

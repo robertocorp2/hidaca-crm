@@ -41,8 +41,7 @@ for (const scenario of scenarios) {
       const providerStarted = new Promise(resolve => { reachedProvider = resolve; });
       const providerRelease = new Promise(resolve => { releaseProvider = resolve; });
       const activeCount = () => sqlite.prepare("SELECT COUNT(*) AS n FROM write_leases WHERE outcome IS NULL").get().n;
-      mock.module("cloudflare:workers", { namedExports: { env: { FILES: files } } });
-      mock.module(pathToFileURL(resolve("db/index.ts")).href, { namedExports: { getD1: () => binding, getDb: () => db } });
+      mock.module(pathToFileURL(resolve("db/index.ts")).href, { namedExports: { getD1: () => binding, getDb: () => db, getFiles: () => files } });
       mock.module(pathToFileURL(resolve("app/chatgpt-auth.ts")).href, { namedExports: {
         getChatGPTUser: async () => user, requireChatGPTUser: async () => user,
       } });

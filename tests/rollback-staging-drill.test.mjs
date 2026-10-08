@@ -23,7 +23,7 @@ async function withServer(handler, callback) {
   }
 }
 
-test("staging drill drains, reconciles, reopens, and records authenticated evidence", async () => {
+test("local-only drill harness drains, reconciles, and reopens through a test server", async () => {
   const calls = [];
   const responses = {
     "/api/maintenance": [
@@ -40,14 +40,14 @@ test("staging drill drains, reconciles, reopens, and records authenticated evide
     const value = Array.isArray(responses[key]) ? responses[key].shift() : responses[key];
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify(value));
-  }, (baseUrl) => runDrill({ baseUrl, authEmail: "admin@example.com", snapshotAt: "2026-09-18T18:00:00Z", now: () => "2026-09-18T18:02:00.000Z" }));
+  }, (baseUrl) => runDrill({ baseUrl, snapshotAt: "2026-09-18T18:00:00Z", now: () => "2026-09-18T18:02:00.000Z" }));
 
   assert.equal(evidence.outcome, "passed");
   assert.deepEqual(calls.map(({ method, url }) => [method, url.split("?")[0]]), [
     ["GET", "/api/maintenance"], ["POST", "/api/maintenance/enter"], ["GET", "/api/maintenance"],
     ["GET", "/api/maintenance/reconciliation"], ["POST", "/api/maintenance/reopen"],
   ]);
-  assert.ok(calls.every((call) => call.email === "admin@example.com"));
+  assert.ok(calls.every((call) => call.email === undefined));
 });
 
 test("reconciliation findings fail closed and do not reopen the barrier", async () => {
@@ -59,7 +59,7 @@ test("reconciliation findings fail closed and do not reopen the barrier", async 
     else if (request.url === "/api/maintenance/enter") response.end(JSON.stringify({ mode: "maintenance", activeWriterCount: 0 }));
     else if (request.url.startsWith("/api/maintenance/reconciliation")) response.end(JSON.stringify({ ...cleanReconciliation(), r2: { ...cleanReconciliation().r2, orphanedObjects: ["unexpected.bin"] } }));
     else response.end(JSON.stringify({ mode: "open", activeWriterCount: 0 }));
-  }, (baseUrl) => runDrill({ baseUrl, authEmail: "admin@example.com", snapshotAt: "2026-09-18T18:00:00Z" })), (error) => {
+  }, (baseUrl) => runDrill({ baseUrl, snapshotAt: "2026-09-18T18:00:00Z" })), (error) => {
     assert.ok(error instanceof DrillFailure);
     assert.match(error.message, /reconciliation/i);
     return true;
@@ -75,7 +75,6 @@ test("production's absolute DNS hostname is rejected before any request", async 
   let requests = 0;
   await assert.rejects(() => runDrill({
     baseUrl: "https://HIDACA-CONSTRUCTORA-APP.ROBERTOCORP2.CHATGPT.SITE./",
-    authEmail: "admin@example.com",
     snapshotAt: "2026-09-18T18:00:00Z",
     fetchImpl: async () => {
       requests++;
@@ -85,7 +84,7 @@ test("production's absolute DNS hostname is rejected before any request", async 
   assert.equal(requests, 0);
 });
 
-test("staging redirects cannot forward an authenticated maintenance request", async () => {
+test("local redirects are rejected before a second request", async () => {
   let redirectedRequests = 0;
   let reopenRequests = 0;
   await withServer((_request, response) => {
@@ -104,7 +103,6 @@ test("staging redirects cannot forward an authenticated maintenance request", as
       }
     }, (baseUrl) => runDrill({
       baseUrl,
-      authEmail: "admin@example.com",
       snapshotAt: "2026-09-18T18:00:00Z",
       timeoutMs: 0,
     })));

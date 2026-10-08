@@ -1,5 +1,4 @@
-import { getD1 } from "../../../../db";
-import { env } from "cloudflare:workers";
+import { getD1, getFiles } from "../../../../db";
 import { authorizeApi } from "../../../lib/authorization";
 import { enterMaintenance, MaintenanceDrainTimeoutError } from "../../../lib/write-barrier";
 
@@ -16,7 +15,7 @@ export async function POST(request: Request) {
   const reason = typeof payload.reason === "string" && payload.reason.trim() ? payload.reason.trim() : "rollback";
   const timeoutMs = typeof payload.timeoutMs === "number" && Number.isFinite(payload.timeoutMs) ? payload.timeoutMs : undefined;
   try {
-    return Response.json(await enterMaintenance(getD1(), { reason, operatorEmail: auth.user.email, timeoutMs }, env.FILES), { headers: { "cache-control": "private, no-store" } });
+    return Response.json(await enterMaintenance(getD1(), { reason, operatorEmail: auth.user.email, timeoutMs }, getFiles()), { headers: { "cache-control": "private, no-store" } });
   } catch (error) {
     if (error instanceof MaintenanceDrainTimeoutError) {
       return Response.json({ error: error.message, code: error.code, activeWriterCount: error.activeWriters.length, activeWriters: error.activeWriters }, { status: 409, headers: { "cache-control": "no-store", "retry-after": "1" } });
