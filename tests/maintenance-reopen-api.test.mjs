@@ -15,7 +15,10 @@ test("reopen route reports non-cacheable conflicts and preserves its admin gate"
     let authorized = true;
     let failure = new MaintenanceStateConflictError();
     mock.module(pathToFileURL(resolve("db/index.ts")).href, {
-      namedExports: { getD1: () => { throw failure; } },
+      namedExports: {
+        getD1: () => { throw failure; },
+        getFiles: () => ({}),
+      },
     });
     mock.module(pathToFileURL(resolve("app/lib/authorization.ts")).href, {
       namedExports: { authorizeApi: async (admin) => {
