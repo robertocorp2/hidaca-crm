@@ -5708,8 +5708,7 @@ textarea:focus-visible {
     margin-left: 0;
     width: 100%;
   }
-  .record-ai-approval > div > button,
-  .daily-brief-item-actions > * {
+  .record-ai-approval > div > button {
     min-height: 40px;
   }
   .daily-brief-item,
