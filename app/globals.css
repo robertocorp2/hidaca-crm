@@ -924,6 +924,38 @@ tbody tr:hover {
   opacity: 0.6;
 }
 
+/* Canonical HIDACA button sizes. Variant classes provide the semantic color; these
+   modifiers provide the shared geometry used by actions across every workspace. */
+.button-size-sm {
+  font-size: 0.76rem !important;
+  min-height: 34px !important;
+  padding: 6px 10px !important;
+}
+.button-size-lg {
+  font-size: 0.9rem !important;
+  min-height: 48px !important;
+  padding: 13px 22px !important;
+}
+.icon-button.button-size-sm {
+  height: 34px;
+  padding: 0 !important;
+  width: 34px;
+}
+.icon-button.button-size-lg {
+  height: 48px;
+  padding: 0 !important;
+  width: 48px;
+}
+.primary-button:focus-visible,
+.secondary-button:focus-visible,
+.danger-button:focus-visible,
+.ghost-button:focus-visible,
+.text-button:focus-visible,
+.icon-button:focus-visible {
+  outline: 3px solid rgba(12, 103, 71, 0.24);
+  outline-offset: 2px;
+}
+
 .confirm-backdrop {
   align-items: center;
   background: rgba(0, 29, 19, 0.72);
@@ -1101,10 +1133,6 @@ textarea:focus {
   font-size: 0.78rem;
 }
 
-.pagination .secondary-button {
-  min-height: 40px;
-  padding: 8px 13px;
-}
 .pagination .secondary-button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
@@ -4219,9 +4247,6 @@ body {
 }
 .record-actions > * {
   border-radius: 8px;
-  font-size: 0.78rem;
-  min-height: 34px;
-  padding: 7px 12px;
 }
 .record-about {
   border-top: 1px solid var(--line);
@@ -4954,13 +4979,6 @@ textarea:focus-visible {
   background: #edf4f0;
   border-color: var(--line);
 }
-.compact-action {
-  border-radius: var(--radius-sm) !important;
-  font-size: 0.76rem !important;
-  gap: var(--space-1);
-  min-height: 34px !important;
-  padding: 6px 10px !important;
-}
 .record-action-menu {
   position: relative;
 }
@@ -4983,9 +5001,7 @@ textarea:focus-visible {
   color: var(--danger);
   cursor: pointer;
   display: block;
-  font-size: 0.78rem;
   font-weight: 760;
-  padding: 9px 10px;
   text-align: left;
   width: 100%;
 }
@@ -5169,10 +5185,7 @@ textarea:focus-visible {
   flex-wrap: nowrap;
 }
 .record-actions > * {
-  font-size: 0.74rem;
   line-height: 1.2;
-  min-height: 32px;
-  padding: 5px 9px;
   white-space: nowrap;
 }
 
@@ -5322,11 +5335,6 @@ textarea:focus-visible {
   align-items: center;
   display: inline-flex;
   gap: 6px;
-}
-.compact-action {
-  font-size: 0.75rem !important;
-  min-height: 34px !important;
-  padding: 6px 10px !important;
 }
 .record-about {
   padding-top: 18px;
@@ -5700,9 +5708,7 @@ textarea:focus-visible {
     margin-left: 0;
     width: 100%;
   }
-  .record-ai-approval > div > button,
-  .daily-brief-item-actions > *,
-  .daily-brief-approval > div:last-child > button {
+  .record-ai-approval > div > button {
     min-height: 40px;
   }
   .daily-brief-item,
@@ -7892,6 +7898,10 @@ textarea:focus-visible {
 }
 .icon-button:hover {
   background: var(--green-100);
+}
+.menu-button,
+.mobile-search-button {
+  background: transparent;
 }
 .ds-badge-stack {
   align-items: start;

@@ -6,6 +6,7 @@ import { RecordAiPanel } from "./record-ai-panel";
 import {
   ActiveFilterChip,
   AutocompleteInput,
+  Button,
   Empty,
   FilterableStatus,
   LoadingState,
@@ -209,9 +210,9 @@ export function ProjectsView({
         <div className="breadcrumbs">
           <span>Inicio</span>
           <i>/</i>
-          <button onClick={() => setSelectedId(null)} type="button">
+          <Button variant="text" onClick={() => setSelectedId(null)} type="button">
             Proyectos
-          </button>
+          </Button>
           <i>/</i>
           <span aria-current="page">{project.name}</span>
         </div>
@@ -222,8 +223,8 @@ export function ProjectsView({
             <p>{project.businessName}</p>
           </div>
           {canWrite && (
-            <button
-              className="primary-button"
+            <Button
+              variant="primary"
               onClick={() => {
                 setEditing(project);
                 setShowForm(true);
@@ -231,7 +232,7 @@ export function ProjectsView({
               type="button"
             >
               Editar proyecto
-            </button>
+            </Button>
           )}
         </div>
         <RecordAiPanel canApprove={canApproveAi} canAsk={canAskAi} canPropose={canProposeAi} entityId={project.id} entityType="project" title={project.name} />
@@ -347,8 +348,8 @@ export function ProjectsView({
       </div>
       <PageHeader
         action={canWrite ? (
-          <button
-            className="primary-button"
+          <Button
+            variant="primary"
             onClick={() => {
               setEditing(null);
               setShowForm(true);
@@ -356,7 +357,7 @@ export function ProjectsView({
             type="button"
           >
             Nuevo proyecto
-          </button>
+          </Button>
         ) : undefined}
         description="Clientes, contactos, ubicaciones y cotizaciones relacionadas."
         eyebrow="Operaciones"
@@ -601,12 +602,12 @@ function ProjectForm({
         </label>
       </div>
       <div className="form-actions">
-        <button className="secondary-button" onClick={onCancel} type="button">
+        <Button variant="secondary" onClick={onCancel} type="button">
           Cancelar
-        </button>
-        <button className="primary-button" disabled={busy}>
+        </Button>
+        <Button variant="primary" disabled={busy}>
           {busy ? "Guardando…" : "Guardar"}
-        </button>
+        </Button>
       </div>
     </form>
   );
