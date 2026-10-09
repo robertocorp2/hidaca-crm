@@ -56,6 +56,7 @@ test("shared button primitives expose the canonical variant and size contract", 
   assert.match(ui, /<nav aria-label="Paginación" className="pagination">[\s\S]*<Button[\s\S]*variant="secondary"[\s\S]*Página \{page\} de \{totalPages\}[\s\S]*<Button[\s\S]*variant="secondary"/);
   assert.doesNotMatch(css, /\.pagination \.secondary-button\s*\{[^}]*\b(?:min-height|padding|height|width):/);
   assert.doesNotMatch(css, /\.danger-menu-item\s*\{[^}]*\b(?:font-size|min-height|padding|height):/);
+  assert.doesNotMatch(css, /\.daily-brief-approval > div:last-child > button/);
   for (const variant of ["primary", "secondary", "danger", "ghost", "text"]) {
     assert.match(ui, new RegExp(`${variant}: "${variant}-button"`));
   }
@@ -92,6 +93,7 @@ test("shared button primitives expose the canonical variant and size contract", 
   assert.match(dailyBrief, /<Button[\s\S]*variant="secondary"[\s\S]*Actualizar/);
   assert.match(dailyBrief, /<Button[\s\S]*variant="text"[\s\S]*Preparar seguimiento/);
   assert.match(dailyBrief, /<Button[\s\S]*variant="secondary"[\s\S]*Rechazar/);
+  assert.match(dailyBrief, /daily-brief-approval[\s\S]*<Button[\s\S]*<Button[\s\S]*variant="secondary"/);
 });
 
 test("core workspace actions do not use raw buttons with legacy variant classes", async () => {
