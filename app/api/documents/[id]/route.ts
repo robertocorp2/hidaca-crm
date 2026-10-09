@@ -2,12 +2,12 @@ import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { documents } from "../../../../db/schema";
-import { writeAudit } from "../../../lib/audit";
 import { authorizeApi } from "../../../lib/authorization";
 import { withDocumentWriteLease } from "../../../lib/document-write-barrier";
 import {
   createDocumentStorageOperation,
   findDocumentStorageOperation,
+  ensureDocumentDeleteAudit,
   metadataFromOperation,
   requestIdempotencyKey,
   transitionDocumentStorageOperation,
@@ -150,21 +150,16 @@ export async function DELETE(request: Request, context: RouteContext) {
       new Date().toISOString(),
     );
     await filesBucket().delete(objectKey);
+    await ensureDocumentDeleteAudit(
+      operation,
+      document?.name ?? metadata?.name ?? id,
+    );
+    await deleteSearchDocument("document", id);
     await transitionDocumentStorageOperation(
       operation.id,
       "completed",
       new Date().toISOString(),
     );
-    await Promise.all([
-      writeAudit(
-        auth.user.email,
-        "delete",
-        "document",
-        id,
-        document?.name ?? metadata?.name ?? id,
-      ),
-      deleteSearchDocument("document", id),
-    ]).catch(() => undefined);
     return Response.json({ ok: true, operationId: operation.id, replay: Boolean(existing) });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

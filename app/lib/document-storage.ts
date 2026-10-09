@@ -1,5 +1,5 @@
 import { getD1 } from "../../db";
-import { upsertSearchDocument } from "./search";
+import { deleteSearchDocument, upsertSearchDocument } from "./search";
 import {
   buildDocumentStorageReport,
   metadataMatchesOperation,
@@ -142,6 +142,38 @@ export async function transitionDocumentStorageOperation(
     .run();
 }
 
+export async function ensureDocumentDeleteAudit(
+  operation: Pick<
+    DocumentStorageOperation,
+    "createdBy" | "createdAt" | "documentId"
+  >,
+  name: string,
+) {
+  await getD1()
+    .prepare(
+      `INSERT INTO audit_log
+       (actor_email, action, entity_type, entity_id, detail, created_at)
+       SELECT ?, 'delete', 'document', ?, ?, ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM audit_log
+         WHERE actor_email = ? AND action = 'delete'
+           AND entity_type = 'document' AND entity_id = ?
+           AND detail = ? AND created_at = ?
+       )`,
+    )
+    .bind(
+      operation.createdBy,
+      operation.documentId,
+      name,
+      operation.createdAt,
+      operation.createdBy,
+      operation.documentId,
+      name,
+      operation.createdAt,
+    )
+    .run();
+}
+
 async function listDocumentObjects(bucket: DocumentStorageBucket) {
   const objects: DocumentObjectInventoryItem[] = [];
   let cursor: string | undefined;
@@ -276,6 +308,9 @@ export async function reconcileDocumentStorage(
         operation.kind === "delete" &&
         !documentById.has(operation.documentId)
       ) {
+        const fullOperation = await findDocumentStorageOperationById(operation.id);
+        if (!fullOperation) throw new Error("Delete operation could not be verified.");
+        const metadata = metadataFromOperation(fullOperation);
         if (objectKeys.has(operation.objectKey)) {
           await bucket.delete(operation.objectKey);
           repairs.push({
@@ -285,6 +320,11 @@ export async function reconcileDocumentStorage(
             objectKey: operation.objectKey,
           });
         }
+        await ensureDocumentDeleteAudit(
+          fullOperation,
+          metadata?.name ?? operation.documentId,
+        );
+        await deleteSearchDocument("document", operation.documentId);
         await transitionDocumentStorageOperation(
           operation.id,
           "completed",

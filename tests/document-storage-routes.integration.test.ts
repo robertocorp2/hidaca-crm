@@ -51,7 +51,7 @@ function testPlugin(): Plugin {
       if (id === "\0hidaca-test-workers") return "export const env = globalThis.__HIDACA_TEST_ENV;";
       if (id === "\0hidaca-test-authorization") return authorizationModule;
       if (id === "\0hidaca-test-audit") return "export async function writeAudit() { if (globalThis.__HIDACA_TEST_EFFECTS?.failAudit) { globalThis.__HIDACA_TEST_EFFECTS.failAudit = false; throw new Error('injected audit failure'); } }";
-      if (id === "\0hidaca-test-search") return "export async function upsertSearchDocument() { if (globalThis.__HIDACA_TEST_EFFECTS?.failSearch) { globalThis.__HIDACA_TEST_EFFECTS.failSearch = false; throw new Error('injected search failure'); } }; export async function deleteSearchDocument() {};";
+      if (id === "\0hidaca-test-search") return "export async function upsertSearchDocument() { if (globalThis.__HIDACA_TEST_EFFECTS?.failSearch) { globalThis.__HIDACA_TEST_EFFECTS.failSearch = false; throw new Error('injected search failure'); } }; export async function deleteSearchDocument() { if (globalThis.__HIDACA_TEST_EFFECTS?.failSearch) { globalThis.__HIDACA_TEST_EFFECTS.failSearch = false; throw new Error('injected search failure'); } };";
       return null;
     },
   };
@@ -203,6 +203,57 @@ test("upload repair retries failed audit and search effects before completion", 
       assert.equal((await app.DB.prepare(
         "SELECT count(*) AS count FROM search_documents WHERE entity_type = 'document' AND entity_id = ?",
       ).bind(operation.documentId).first<{ count: number }>())?.count, 1);
+    } finally {
+      await app.close();
+    }
+  }
+});
+
+test("delete audit and search failures remain retryable until repair completes", { timeout: 120000 }, async () => {
+  for (const effect of ["audit", "search"] as const) {
+    const app = await setup();
+    try {
+      app.setActor({ email: "admin@example.test", role: "admin" });
+      const uploaded = await app.upload.POST(uploadRequest(`delete-effects-upload-${effect}`));
+      assert.equal(uploaded.status, 201);
+      const { document } = await uploaded.json() as { document: { id: string; objectKey: string } };
+      if (effect === "audit") {
+        await app.DB.prepare(`CREATE TRIGGER reject_document_delete_audit BEFORE INSERT ON audit_log
+          WHEN NEW.action = 'delete' BEGIN SELECT RAISE(FAIL, 'injected audit failure'); END`).run();
+      } else {
+        app.setEffectFailure(effect);
+      }
+      const deletion = await app.item.DELETE(
+        new Request(`https://crm.example.test/api/documents/${document.id}`, {
+          method: "DELETE",
+          headers: { "Idempotency-Key": `delete-effects-${effect}` },
+        }),
+        itemContext(document.id),
+      );
+      assert.equal(deletion.status, 202);
+      assert.equal(await app.bucket.get(document.objectKey), null);
+      const { operationId } = await deletion.json() as { operationId: string };
+      assert.equal((await app.DB.prepare(
+        "SELECT status FROM document_storage_operations WHERE id = ?",
+      ).bind(operationId).first<{ status: string }>())?.status, "reconcile_required");
+      if (effect === "audit") {
+        await app.DB.prepare("DROP TRIGGER reject_document_delete_audit").run();
+      }
+
+      const repair = await app.reconcile.POST(new Request(
+        "https://crm.example.test/api/admin/documents/reconciliation?repair=true",
+        { method: "POST" },
+      ));
+      assert.equal(repair.status, 200);
+      assert.equal((await app.DB.prepare(
+        "SELECT status FROM document_storage_operations WHERE id = ?",
+      ).bind(operationId).first<{ status: string }>())?.status, "completed");
+      assert.equal((await app.DB.prepare(
+        "SELECT count(*) AS count FROM audit_log WHERE entity_type = 'document' AND entity_id = ? AND action = 'delete'",
+      ).bind(document.id).first<{ count: number }>())?.count, 1);
+      assert.equal((await app.DB.prepare(
+        "SELECT count(*) AS count FROM search_documents WHERE entity_type = 'document' AND entity_id = ?",
+      ).bind(document.id).first<{ count: number }>())?.count, 0);
     } finally {
       await app.close();
     }
