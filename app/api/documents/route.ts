@@ -109,12 +109,20 @@ export async function POST(request: Request) {
       .from(documents)
       .where(eq(documents.id, existing.documentId))
       .limit(1);
-    if (document) {
+    if (!document) {
       return Response.json(
-        { document, operationId: existing.id, replay: true },
-        { headers: { "x-idempotent-replay": "true" } },
+        {
+          error: "La carga original se completó, pero el documento ya no existe; usa una clave nueva para cargarlo otra vez.",
+          operationId: existing.id,
+          replay: true,
+        },
+        { status: 410, headers: { "x-idempotent-replay": "true" } },
       );
     }
+    return Response.json(
+      { document, operationId: existing.id, replay: true },
+      { headers: { "x-idempotent-replay": "true" } },
+    );
   }
 
   const proposedId = existing?.documentId ?? crypto.randomUUID();

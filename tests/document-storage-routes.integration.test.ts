@@ -293,6 +293,38 @@ test("document routes authorize access, persist metadata, retrieve bytes, and re
   }
 });
 
+test("a completed upload key cannot recreate a document after it was deleted", { timeout: 120000 }, async () => {
+  const app = await setup();
+  try {
+    app.setActor({ email: "operator@example.test", role: "operator" });
+    const uploaded = await app.upload.POST(uploadRequest("upload-delete-replay"));
+    assert.equal(uploaded.status, 201);
+    const { document, operationId } = await uploaded.json() as {
+      document: { id: string; objectKey: string };
+      operationId: string;
+    };
+
+    const deleted = await app.item.DELETE(
+      new Request(`https://crm.example.test/api/documents/${document.id}`, {
+        method: "DELETE",
+        headers: { "Idempotency-Key": "delete-after-upload" },
+      }),
+      itemContext(document.id),
+    );
+    assert.equal(deleted.status, 200);
+    assert.equal(await app.bucket.get(document.objectKey), null);
+
+    const replay = await app.upload.POST(uploadRequest("upload-delete-replay"));
+    assert.equal(replay.status, 410);
+    assert.equal(replay.headers.get("x-idempotent-replay"), "true");
+    assert.equal((await replay.json() as { operationId: string }).operationId, operationId);
+    assert.equal((await app.DB.prepare("SELECT count(*) AS count FROM documents WHERE id = ?").bind(document.id).first<{ count: number }>())?.count, 0);
+    assert.equal(await app.bucket.get(document.objectKey), null);
+  } finally {
+    await app.close();
+  }
+});
+
 test("upload storage and metadata failures leave repairable state; delete failures retry cleanup", { timeout: 120000 }, async () => {
   const app = await setup();
   try {
