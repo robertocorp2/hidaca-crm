@@ -237,6 +237,25 @@ test("rollback reconciliation flags projects and every project row created after
   }
 });
 
+test("rollback reconciliation flags post-snapshot quotation edits recorded only in entity history", async () => {
+  const { binding, sqlite, files } = database();
+  try {
+    sqlite.prepare("INSERT INTO entity_history (entity_type, entity_id, action, actor_email, created_at) VALUES ('quotation', ?, 'updated', ?, ?)")
+      .run("quotation-after-snapshot", "owner@example.test", "2026-09-14T05:00:00.000Z");
+
+    const report = await reconcileRollback(binding, {
+      get: files.get.bind(files),
+      async list() { return { objects: [], truncated: false }; },
+    }, "2026-09-14T04:00:00.000Z");
+
+    assert.equal(report.d1.postSnapshot.entityHistory.count, 1);
+    assert.equal(report.d1.postSnapshot.entityHistory.sample[0]?.id, "1");
+    assert.equal(report.d1.postSnapshot.auditLog.count, 0);
+  } finally {
+    sqlite.close();
+  }
+});
+
 test("a failed authority renewal keeps the active D1 lease visible to maintenance drain", async () => {
   const { binding, sqlite, files } = database();
   try {
