@@ -5001,9 +5001,7 @@ textarea:focus-visible {
   color: var(--danger);
   cursor: pointer;
   display: block;
-  font-size: 0.78rem;
   font-weight: 760;
-  padding: 9px 10px;
   text-align: left;
   width: 100%;
 }

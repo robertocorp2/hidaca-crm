@@ -55,6 +55,7 @@ test("shared button primitives expose the canonical variant and size contract", 
   assert.match(ui, /export function IconButton/);
   assert.match(ui, /<nav aria-label="Paginación" className="pagination">[\s\S]*<Button[\s\S]*variant="secondary"[\s\S]*Página \{page\} de \{totalPages\}[\s\S]*<Button[\s\S]*variant="secondary"/);
   assert.doesNotMatch(css, /\.pagination \.secondary-button\s*\{[^}]*\b(?:min-height|padding|height|width):/);
+  assert.doesNotMatch(css, /\.danger-menu-item\s*\{[^}]*\b(?:font-size|min-height|padding|height):/);
   for (const variant of ["primary", "secondary", "danger", "ghost", "text"]) {
     assert.match(ui, new RegExp(`${variant}: "${variant}-button"`));
   }
@@ -83,6 +84,7 @@ test("shared button primitives expose the canonical variant and size contract", 
   assert.match(operations, /<Button[\s\S]*className="profile-trigger"/);
   assert.match(workspace, /<Button[\s\S]*className="record-more-button"/);
   assert.match(workspace, /<Button[\s\S]*className="danger-menu-item"/);
+  assert.match(workspace, /className="danger-menu-item"[\s\S]*size="sm"[\s\S]*variant="text"/);
   assert.match(workspace, /<Button[\s\S]*relationship-empty-action/);
   assert.match(workspace, /<Button className="timeline-link"[\s\S]*variant="text"/);
   assert.match(operations, /<Button[\s\S]*variant="danger"/);
