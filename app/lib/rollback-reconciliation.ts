@@ -55,6 +55,10 @@ const POST_SNAPSHOT_QUERIES: Record<string, { sample: string; count: string }> =
   projectContacts: { sample: "SELECT project_id || ':' || contact_id AS id, created_at FROM project_contacts WHERE created_at > ? ORDER BY created_at LIMIT 20", count: "SELECT COUNT(*) AS count FROM project_contacts WHERE created_at > ?" },
   projectSearchDocuments: { sample: "SELECT CAST(row_id AS TEXT) AS id, updated_at AS created_at FROM search_documents WHERE entity_type = 'project' AND updated_at > ? ORDER BY updated_at LIMIT 20", count: "SELECT COUNT(*) AS count FROM search_documents WHERE entity_type = 'project' AND updated_at > ?" },
   projectHistory: { sample: "SELECT CAST(id AS TEXT) AS id, created_at FROM entity_history WHERE entity_type = 'project' AND created_at > ? ORDER BY created_at LIMIT 20", count: "SELECT COUNT(*) AS count FROM entity_history WHERE entity_type = 'project' AND created_at > ?" },
+  // Entity edits are not guaranteed to emit a global audit_log row. Include
+  // all history so rollback drills catch post-snapshot edits to quotations
+  // and other business entities as well as newly-created rows.
+  entityHistory: { sample: "SELECT CAST(id AS TEXT) AS id, created_at FROM entity_history WHERE created_at > ? ORDER BY created_at LIMIT 20", count: "SELECT COUNT(*) AS count FROM entity_history WHERE created_at > ?" },
   auditLog: { sample: "SELECT CAST(id AS TEXT) AS id, created_at FROM audit_log WHERE created_at > ? AND NOT (entity_type = 'maintenance' AND entity_id = '1' AND action = 'enter') ORDER BY created_at LIMIT 20", count: "SELECT COUNT(*) AS count FROM audit_log WHERE created_at > ? AND NOT (entity_type = 'maintenance' AND entity_id = '1' AND action = 'enter')" },
 };
 
