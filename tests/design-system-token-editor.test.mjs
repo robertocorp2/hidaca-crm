@@ -12,7 +12,7 @@ import {
   validateTokenValue,
 } from "../app/app/design-system-token-utils.ts";
 
-const root = new URL("../../design-system/tokens.json", import.meta.url);
+const root = new URL("../design-system/tokens.json", import.meta.url);
 const appRoot = new URL("../app/", import.meta.url);
 const tokenDocument = JSON.parse(await readFile(root, "utf8"));
 const leaves = flattenTokenDocument(tokenDocument);

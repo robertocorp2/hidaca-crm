@@ -2080,6 +2080,7 @@ export const ecfInboundMessages = sqliteTable(
     operation: text("operation").notNull(),
     issuerRnc: text("issuer_rnc").notNull().default(""),
     encf: text("encf").notNull().default(""),
+    objectKey: text("object_key"),
     messageArtifactId: text("message_artifact_id").references(() => ecfArtifacts.id, { onDelete: "restrict" }),
     responseArtifactId: text("response_artifact_id").references(() => ecfArtifacts.id, { onDelete: "restrict" }),
     outcome: text("outcome").notNull().default("received"),
@@ -2855,5 +2856,30 @@ export const documentStorageOperations = sqliteTable("document_storage_operation
   updatedAt: text("updated_at").notNull(),
   completedAt: text("completed_at"),
 }, (table) => [uniqueIndex("document_storage_operations_idempotency_unique").on(table.idempotencyKey), index("document_storage_operations_status_idx").on(table.status, table.updatedAt), index("document_storage_operations_document_idx").on(table.documentId)]);
+
+export const maintenanceState = sqliteTable("maintenance_state", {
+  id: integer("id").primaryKey(),
+  mode: text("mode", { enum: ["open", "maintenance"] }).notNull(),
+  generation: integer("generation").notNull().default(0),
+  reason: text("reason").notNull().default(""),
+  operatorEmail: text("operator_email").notNull().default(""),
+  activatedAt: text("activated_at"),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const writeLeases = sqliteTable("write_leases", {
+  id: text("id").primaryKey(),
+  generation: integer("generation").notNull(),
+  writerKind: text("writer_kind").notNull(),
+  requestId: text("request_id").notNull(),
+  startedAt: text("started_at").notNull(),
+  renewedAt: text("renewed_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  outcome: text("outcome"),
+}, (table) => [
+  index("write_leases_generation_idx").on(table.generation),
+  index("write_leases_expiry_idx").on(table.expiresAt),
+  index("write_leases_writer_kind_idx").on(table.writerKind),
+]);
 
 

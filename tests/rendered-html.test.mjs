@@ -25,7 +25,8 @@ test("enforces ChatGPT identity plus a server-side D1 allowlist", async () => {
   ]);
   assert.match(authorization, /getChatGPTUser/);
   assert.match(authorization, /staffUsers/);
-  assert.match(authorization, /eq\(staffUsers\.active, true\)/);
+  assert.match(authorization, /if \(!staff\?\.active\) return null/);
+  assert.match(authorization, /withWriteLease\(getD1\(\), getFiles\(\), "authorization-owner-bootstrap"/);
   assert.match(authorization, /AuthorizationRequirement/);
   assert.match(authorization, /resolvePermissionMatrix/);
   assert.match(protectedPage, /getAuthorizedUser/);

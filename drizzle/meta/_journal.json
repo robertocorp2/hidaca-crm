@@ -178,7 +178,21 @@
       "breakpoints": true
     },
     {
+      "idx": 25,
+      "version": "7",
+      "when": 1788000003000,
+      "tag": "0025_maintenance_write_barrier",
+      "breakpoints": true
+    },
+    {
       "idx": 26,
+      "version": "7",
+      "when": 1788000004000,
+      "tag": "0026_ecf_inbound_object_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
       "version": "7",
       "when": 1788000004001,
       "tag": "0027_document_storage_reconciliation",
