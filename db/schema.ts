@@ -2080,6 +2080,7 @@ export const ecfInboundMessages = sqliteTable(
     operation: text("operation").notNull(),
     issuerRnc: text("issuer_rnc").notNull().default(""),
     encf: text("encf").notNull().default(""),
+    objectKey: text("object_key"),
     messageArtifactId: text("message_artifact_id").references(() => ecfArtifacts.id, { onDelete: "restrict" }),
     responseArtifactId: text("response_artifact_id").references(() => ecfArtifacts.id, { onDelete: "restrict" }),
     outcome: text("outcome").notNull().default("received"),
@@ -2839,5 +2840,30 @@ export const dailyReportDocuments = sqliteTable("daily_report_documents", {
   caption: text("caption").notNull().default(""),
   createdAt: text("created_at").notNull(),
 }, (table) => [uniqueIndex("daily_report_documents_unique").on(table.reportId, table.documentId), index("daily_report_documents_report_idx").on(table.reportId)]);
+
+export const maintenanceState = sqliteTable("maintenance_state", {
+  id: integer("id").primaryKey(),
+  mode: text("mode", { enum: ["open", "maintenance"] }).notNull(),
+  generation: integer("generation").notNull().default(0),
+  reason: text("reason").notNull().default(""),
+  operatorEmail: text("operator_email").notNull().default(""),
+  activatedAt: text("activated_at"),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const writeLeases = sqliteTable("write_leases", {
+  id: text("id").primaryKey(),
+  generation: integer("generation").notNull(),
+  writerKind: text("writer_kind").notNull(),
+  requestId: text("request_id").notNull(),
+  startedAt: text("started_at").notNull(),
+  renewedAt: text("renewed_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  outcome: text("outcome"),
+}, (table) => [
+  index("write_leases_generation_idx").on(table.generation),
+  index("write_leases_expiry_idx").on(table.expiresAt),
+  index("write_leases_writer_kind_idx").on(table.writerKind),
+]);
 
 

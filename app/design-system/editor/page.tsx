@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import tokenDocument from "../../../../design-system/tokens.json";
+import tokenDocument from "../../../design-system/tokens.json";
 import { DesignSystemTokenEditor } from "../../app/design-system-token-editor";
 
 export const metadata = {

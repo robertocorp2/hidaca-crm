@@ -1,12 +1,13 @@
 import { and, eq, isNull, or } from "drizzle-orm";
 import type { D1Database } from "@cloudflare/workers-types";
-import { getD1, getDb } from "../../../../db";
+import { getD1, getDb, getFiles } from "../../../../db";
 import { contacts, leads, opportunities, whatsappConversations } from "../../../../db/schema";
 import { normalizePhone } from "../../../lib/crm";
 import { persistInboundWhatsAppMessage, renewWhatsAppWebhookClaim, resolveWhatsAppWebhookEventHash, runWhatsAppWebhookDelivery, updateWhatsAppDeliveryStatus, webhookClaimIsActive, type WhatsAppWebhookClaim, whatsappWebhookResponse } from "../../../lib/whatsapp-webhook";
 import { downloadMetaMedia, verifyWhatsAppSignature } from "../../../lib/whatsapp";
 import { canonicalWhatsAppMessageIdentity, canonicalWhatsAppWebhookIdentity } from "../../../lib/whatsapp-webhook-identity";
 import { env } from "cloudflare:workers";
+import { assertRequestWriteLease, MaintenanceModeError, maintenanceResponse } from "../../../lib/write-barrier";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -27,6 +28,12 @@ export async function POST(request: Request) {
   const legacyEventHash = await hashBody(rawBody);
   const canonicalEventHash = await hashBody(eventIdentity ?? rawBody);
   const d1 = getD1();
+  try {
+    await assertRequestWriteLease(d1, getFiles(), request);
+  } catch (error) {
+    if (error instanceof MaintenanceModeError || (error as { code?: string })?.code === "MAINTENANCE_AUTHORITY_UNAVAILABLE") return maintenanceResponse();
+    throw error;
+  }
   const eventHash = await resolveWhatsAppWebhookEventHash(d1, canonicalEventHash, legacyEventHash);
   const legacyReplay = eventHash === legacyEventHash && legacyEventHash !== canonicalEventHash;
   const now = new Date().toISOString();

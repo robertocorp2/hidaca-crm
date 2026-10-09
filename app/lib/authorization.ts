@@ -1,5 +1,5 @@
-import { and, eq } from "drizzle-orm";
-import { getDb } from "../../db";
+import { eq } from "drizzle-orm";
+import { getD1, getDb, getFiles } from "../../db";
 import { rolePermissions, staffUsers, userPermissionOverrides } from "../../db/schema";
 import {
   isPermissionModuleKey, permissionActions, type EffectivePermissions,
@@ -8,6 +8,7 @@ import {
   type StaffRole,
 } from "./modules";
 import { getChatGPTUser, requireChatGPTUser, type ChatGPTUser } from "../chatgpt-auth";
+import { MaintenanceModeError, withWriteLease } from "./write-barrier";
 
 export type PermissionOverride = { module: PermissionModuleKey; action: PermissionAction; effect: PermissionEffect };
 export type PermissionDefault = { module: string; action: string; allowed: boolean };
@@ -50,16 +51,25 @@ export async function permissionsForStaffUser(user: { id: number; role: StaffRol
 async function resolveAuthorizedUser(user: ChatGPTUser): Promise<AuthorizedUser | null> {
   const db = getDb();
   const email = normalizedEmail(user.email);
-  const now = new Date().toISOString();
-  if (email === INITIAL_OWNER_EMAIL) {
-    await db.insert(staffUsers).values({
-      email, name: user.fullName ?? user.displayName, role: "admin", active: true,
-      createdAt: now, updatedAt: now,
-    }).onConflictDoNothing({ target: staffUsers.email });
+  let [staff] = await db.select().from(staffUsers).where(eq(staffUsers.email, email)).limit(1);
+  // Existing (including disabled) users are a pure read, even during maintenance.
+  if (!staff && email === INITIAL_OWNER_EMAIL) {
+    try {
+      await withWriteLease(getD1(), getFiles(), "authorization-owner-bootstrap", async () => {
+        const now = new Date().toISOString();
+        await db.insert(staffUsers).values({
+          email, name: user.fullName ?? user.displayName, role: "admin", active: true,
+          createdAt: now, updatedAt: now,
+        }).onConflictDoNothing({ target: staffUsers.email });
+      });
+    } catch (error) {
+      // A missing owner cannot be provisioned while writes are paused.
+      if (error instanceof MaintenanceModeError || (error as { code?: string })?.code === "MAINTENANCE_AUTHORITY_UNAVAILABLE") return null;
+      throw error;
+    }
+    [staff] = await db.select().from(staffUsers).where(eq(staffUsers.email, email)).limit(1);
   }
-  const [staff] = await db.select().from(staffUsers)
-    .where(and(eq(staffUsers.email, email), eq(staffUsers.active, true))).limit(1);
-  if (!staff) return null;
+  if (!staff?.active) return null;
   const { permissions } = await permissionsForStaffUser(staff);
   return { ...user, email, staffUserId: staff.id, role: staff.role, permissions };
 }

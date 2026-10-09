@@ -1,0 +1,174 @@
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import test from "node:test";
+import { DrillFailure, runDrill, validateBaseUrl, validateReconciliation } from "../scripts/rollback-staging-drill.mjs";
+
+function cleanReconciliation() {
+  const postSnapshot = Object.fromEntries(["documents", "importFiles", "ecfArtifacts", "ecfInboundMessages", "voiceRecordings", "whatsappMessages", "whatsappWebhookEvents", "whatsappCampaignRecipients", "whatsappCampaignDeliveryAttempts", "prospectingJobs", "projects", "projectAddresses", "projectLocations", "projectContacts", "projectSearchDocuments", "projectHistory", "auditLog"].map((name) => [name, { count: 0, sample: [] }]));
+  const erasedPostSnapshot = Object.fromEntries(Object.keys(postSnapshot).map((name) => [name, { count: 0, sample: [] }]));
+  return {
+    snapshotAt: "2026-09-18T18:00:00.000Z",
+    checkedAt: "2026-09-18T18:01:00.000Z",
+    d1: { referencedObjectCount: 0, postSnapshot, restoreEvidence: { capturedAt: "2026-09-18T18:00:30.000Z", erasedPostSnapshot }, maintenanceEntryAudit: { count: 0, sample: [] }, untrackedInboundMessages: { count: 0, sample: [] }, unresolvedWriters: { whatsappWebhooks: { count: 0, sample: [] }, whatsappCampaigns: { count: 0, sample: [] }, prospectingJobs: { count: 0, sample: [] } } },
+    r2: { inventoryComplete: true, objectCount: 1, manifestSha256: "a".repeat(64), maintenanceAuthority: { present: true, mode: "maintenance", revision: 2, updatedAfterSnapshot: true }, postSnapshotObjects: [], missingReferencedObjects: [], orphanedObjects: [] },
+  };
+}
+
+async function withServer(handler, callback) {
+  const server = createServer(handler);
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  try {
+    return await callback(`http://127.0.0.1:${port}`);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+}
+
+test("local-only drill harness drains, reconciles, and reopens through a test server", async () => {
+  const calls = [];
+  const responses = {
+    "/api/maintenance": [
+      { mode: "open", generation: 4, activeWriterCount: 0, activeWriters: [] },
+      { mode: "maintenance", generation: 5, activeWriterCount: 0, activeWriters: [] },
+    ],
+    "/api/maintenance/enter": { mode: "maintenance", generation: 5, activeWriterCount: 1, activeWriters: [{ id: "writer-1" }] },
+    "/api/maintenance/reconciliation": [cleanReconciliation(), cleanReconciliation()],
+    "/api/maintenance/reopen": { mode: "open", generation: 6, activeWriterCount: 0, activeWriters: [] },
+  };
+  const evidence = await withServer(async (request, response) => {
+    calls.push({ method: request.method, url: request.url, email: request.headers["oai-authenticated-user-email"] });
+    const key = request.url.startsWith("/api/maintenance/reconciliation") ? "/api/maintenance/reconciliation" : request.url;
+    const value = Array.isArray(responses[key]) ? responses[key].shift() : responses[key];
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(value));
+  }, (baseUrl) => runDrill({ baseUrl, snapshotAt: "2026-09-18T18:00:00Z", now: () => "2026-09-18T18:02:00.000Z" }));
+
+  assert.equal(evidence.outcome, "passed");
+  assert.deepEqual(calls.map(({ method, url }) => [method, url.split("?")[0]]), [
+    ["GET", "/api/maintenance"], ["POST", "/api/maintenance/enter"], ["GET", "/api/maintenance"],
+    ["GET", "/api/maintenance/reconciliation"], ["GET", "/api/maintenance/reconciliation"], ["POST", "/api/maintenance/reopen"],
+  ]);
+  assert.match(calls[3].url, /phase=before-restore/);
+  assert.match(calls[4].url, /phase=after-restore/);
+  assert.ok(calls.every((call) => call.email === undefined));
+});
+
+test("reconciliation findings fail closed and do not reopen the barrier", async () => {
+  const paths = [];
+  await assert.rejects(() => withServer((request, response) => {
+    paths.push(request.url);
+    response.setHeader("content-type", "application/json");
+    if (request.url === "/api/maintenance") response.end(JSON.stringify({ mode: paths.length === 1 ? "open" : "maintenance", activeWriterCount: 0 }));
+    else if (request.url === "/api/maintenance/enter") response.end(JSON.stringify({ mode: "maintenance", activeWriterCount: 0 }));
+    else if (request.url.startsWith("/api/maintenance/reconciliation")) response.end(JSON.stringify({ ...cleanReconciliation(), r2: { ...cleanReconciliation().r2, orphanedObjects: ["unexpected.bin"] } }));
+    else response.end(JSON.stringify({ mode: "open", activeWriterCount: 0 }));
+  }, (baseUrl) => runDrill({ baseUrl, snapshotAt: "2026-09-18T18:00:00Z" })), (error) => {
+    assert.ok(error instanceof DrillFailure);
+    assert.match(error.message, /reconciliation/i);
+    return true;
+  });
+  assert.equal(paths.some((path) => path === "/api/maintenance/reopen"), false);
+});
+
+test("production is rejected before any request", () => {
+  assert.throws(() => validateBaseUrl("https://hidaca-constructora-app.robertocorp2.chatgpt.site"), /Production/);
+});
+
+test("production's absolute DNS hostname is rejected before any request", async () => {
+  let requests = 0;
+  await assert.rejects(() => runDrill({
+    baseUrl: "https://HIDACA-CONSTRUCTORA-APP.ROBERTOCORP2.CHATGPT.SITE./",
+    snapshotAt: "2026-09-18T18:00:00Z",
+    fetchImpl: async () => {
+      requests++;
+      throw new Error("Unexpected request to production");
+    },
+  }), /Production is not an allowed target/);
+  assert.equal(requests, 0);
+});
+
+test("local redirects are rejected before a second request", async () => {
+  let redirectedRequests = 0;
+  let reopenRequests = 0;
+  await withServer((_request, response) => {
+    redirectedRequests++;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ error: "Redirect target must never be contacted" }));
+  }, async (redirectTarget) => {
+    await assert.rejects(() => withServer((request, response) => {
+      if (request.url === "/api/maintenance/enter") {
+        response.writeHead(307, { location: `${redirectTarget}/api/maintenance/enter` });
+        response.end();
+      } else {
+        if (request.url === "/api/maintenance/reopen") reopenRequests++;
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ mode: "open", activeWriterCount: 0 }));
+      }
+    }, (baseUrl) => runDrill({
+      baseUrl,
+      snapshotAt: "2026-09-18T18:00:00Z",
+      timeoutMs: 0,
+    })));
+  });
+  assert.equal(redirectedRequests, 0);
+  assert.equal(reopenRequests, 0);
+});
+
+test("reconciliation validator rejects incomplete inventory", () => {
+  assert.throws(() => validateReconciliation({ ...cleanReconciliation(), r2: { ...cleanReconciliation().r2, inventoryComplete: false } }), /not clean/i);
+});
+
+test("reconciliation validator rejects a missing maintenance authority", () => {
+  const clean = cleanReconciliation();
+  assert.throws(() => validateReconciliation({ ...clean, r2: { ...clean.r2, maintenanceAuthority: { present: false, mode: null, revision: null, updatedAfterSnapshot: false } } }), /not clean/i);
+  assert.throws(() => validateReconciliation({ ...clean, r2: { ...clean.r2, maintenanceAuthority: { present: true, mode: "open", revision: 3, updatedAfterSnapshot: true } } }), /not clean/i);
+});
+
+test("reconciliation validator rejects an inbound XML row without a durable object key", () => {
+  const clean = cleanReconciliation();
+  assert.throws(() => validateReconciliation({ ...clean, d1: { ...clean.d1, untrackedInboundMessages: { count: 1, sample: [{ id: "inbound-1", created_at: clean.snapshotAt }] } } }), /not clean/i);
+});
+
+test("reconciliation validator rejects omitted or null post-snapshot evidence", () => {
+  const clean = cleanReconciliation();
+  const { documents, ...withoutDocuments } = clean.d1.postSnapshot;
+  assert.ok(documents);
+  assert.throws(() => validateReconciliation({ ...clean, d1: { ...clean.d1, postSnapshot: withoutDocuments } }), /not clean/i);
+  assert.throws(() => validateReconciliation({ ...clean, d1: { ...clean.d1, postSnapshot: { ...clean.d1.postSnapshot, voiceRecordings: { count: null, sample: [] } } } }), /not clean/i);
+  assert.throws(() => validateReconciliation({ ...clean, d1: { ...clean.d1, postSnapshot: { ...clean.d1.postSnapshot, projects: { count: 1, sample: [{ id: "project-after-snapshot", created_at: "2026-09-14T05:00:00.000Z" }] } } } }), /not clean/i);
+  assert.throws(() => validateReconciliation({ ...clean, d1: { ...clean.d1, untrackedInboundMessages: { count: null, sample: [] } } }), /not clean/i);
+});
+
+test("reconciliation validator keeps maintenance closed for unresolved background writers", () => {
+  const clean = cleanReconciliation();
+  assert.throws(() => validateReconciliation({ ...clean, d1: { ...clean.d1, unresolvedWriters: { ...clean.d1.unresolvedWriters, prospectingJobs: { count: 1, sample: [{ id: "job-1", created_at: clean.snapshotAt }] } } } }), /not clean/i);
+});
+
+test("reconciliation accepts one maintenance-entry audit but rejects a second entry", () => {
+  const clean = cleanReconciliation();
+  const entry = { id: "1", created_at: "2026-09-18T18:00:30.000Z" };
+  assert.doesNotThrow(() => validateReconciliation({ ...clean, d1: { ...clean.d1, maintenanceEntryAudit: { count: 1, sample: [entry] } } }));
+  assert.throws(() => validateReconciliation({ ...clean, d1: { ...clean.d1, maintenanceEntryAudit: { count: 2, sample: [entry, { ...entry, id: "2" }] } } }), /not clean/i);
+});
+
+test("reconciliation rejects missing or erased pre-restore D1 evidence", () => {
+  const clean = cleanReconciliation();
+  const { restoreEvidence, ...withoutEvidence } = clean.d1;
+  assert.ok(restoreEvidence);
+  assert.throws(() => validateReconciliation({ ...clean, d1: withoutEvidence }), /not clean/i);
+  const withErasedProject = {
+    ...clean,
+    d1: {
+      ...clean.d1,
+      restoreEvidence: {
+        ...restoreEvidence,
+        erasedPostSnapshot: {
+          ...restoreEvidence.erasedPostSnapshot,
+          projects: { count: 1, sample: [{ id: "project-1", created_at: "2026-09-18T18:00:20.000Z" }] },
+        },
+      },
+    },
+  };
+  assert.throws(() => validateReconciliation(withErasedProject), /not clean/i);
+});
