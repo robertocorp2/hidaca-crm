@@ -60,6 +60,7 @@ test("shared button primitives expose the canonical variant and size contract", 
   assert.match(css, /\.button-size-sm[\s\S]*min-height: 34px/);
   assert.match(css, /\.button-size-lg[\s\S]*min-height: 48px/);
   assert.match(css, /\.icon-button\.button-size-sm[\s\S]*width: 34px/);
+  assert.doesNotMatch(css, /\.record-actions > \* \{[^}]*\b(?:font-size|min-height|padding):/);
   assert.match(css, /\.primary-button:focus-visible[\s\S]*\.icon-button:focus-visible/);
   assert.match(docs, /\| Plus \|/);
   assert.match(docs, /\| Overflow \|/);
