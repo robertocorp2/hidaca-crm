@@ -1,4 +1,4 @@
-export type DocumentUploadKeyState = { signature: string; key: string } | null;
+export type DocumentUploadKeyState = { file: Pick<File, "name" | "size" | "type" | "lastModified">; recordId: string; key: string } | null;
 
 export function documentUploadKeyFor(
   current: DocumentUploadKeyState,
@@ -6,16 +6,9 @@ export function documentUploadKeyFor(
   recordId: string,
   createKey: () => string = () => crypto.randomUUID(),
 ) {
-  const signature = JSON.stringify([
-    file.name,
-    file.size,
-    file.type,
-    file.lastModified,
-    recordId,
-  ]);
-  return current?.signature === signature
+  return current?.file === file && current.recordId === recordId
     ? current
-    : { signature, key: createKey() };
+    : { file, recordId, key: createKey() };
 }
 
 export function postDocumentUpload(

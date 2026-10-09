@@ -76,9 +76,16 @@ async function setup() {
 
   let failPut = false;
   let failDelete = false;
+  let putGate: { started(): void; wait: Promise<void>; resume(): void } | null = null;
   const FILES: Bucket = {
     put: async (key, value, options) => {
       if (failPut) throw new Error("injected R2 put failure");
+      const gate = putGate;
+      if (gate) {
+        putGate = null;
+        gate.started();
+        await gate.wait;
+      }
       return bucket.put(key, value, options as never);
     },
     get: (key) => bucket.get(key),
@@ -111,6 +118,14 @@ async function setup() {
       failPut = options.put ?? false;
       failDelete = options.delete ?? false;
     },
+    pauseNextPut() {
+      let started!: () => void;
+      let resume!: () => void;
+      const waitForStart = new Promise<void>((resolve) => { started = resolve; });
+      const wait = new Promise<void>((resolve) => { resume = resolve; });
+      putGate = { started: () => started(), wait, resume: () => resume() };
+      return { started: waitForStart, resume: () => resume() };
+    },
     setActor(actor: { email: string; role: string } | null) {
       globalThis.__HIDACA_TEST_ACTOR = actor;
     },
@@ -135,6 +150,21 @@ function uploadRequest(key: string, recordId = "record-7") {
 }
 
 const itemContext = (id: string) => ({ params: Promise.resolve({ id }) });
+
+test("document upload lease stays active while R2 mutation is in flight", { timeout: 120000 }, async () => {
+  const app = await setup();
+  try {
+    const gate = app.pauseNextPut();
+    const upload = app.upload.POST(uploadRequest("upload-drain-lease"));
+    await gate.started;
+    const active = await app.DB.prepare("SELECT COUNT(*) AS count FROM write_leases WHERE writer_kind = 'documents-upload' AND outcome IS NULL").first<{ count: number }>();
+    assert.equal(active?.count, 1);
+    gate.resume();
+    assert.equal((await upload).status, 201);
+  } finally {
+    await app.close();
+  }
+});
 
 test("document routes authorize access, persist metadata, retrieve bytes, and replay uploads idempotently", { timeout: 120000 }, async () => {
   const app = await setup();
