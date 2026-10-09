@@ -9,6 +9,7 @@ import { createServer, type Plugin } from "vite";
 declare global {
   var __HIDACA_TEST_ENV: Record<string, unknown> | undefined;
   var __HIDACA_TEST_ACTOR: { email: string; role: string } | null | undefined;
+  var __HIDACA_TEST_EFFECTS: { failAudit: boolean; failSearch: boolean } | undefined;
 }
 
 type Bucket = {
@@ -49,8 +50,8 @@ function testPlugin(): Plugin {
     load(id) {
       if (id === "\0hidaca-test-workers") return "export const env = globalThis.__HIDACA_TEST_ENV;";
       if (id === "\0hidaca-test-authorization") return authorizationModule;
-      if (id === "\0hidaca-test-audit") return "export async function writeAudit() {}";
-      if (id === "\0hidaca-test-search") return "export async function upsertSearchDocument() {}; export async function deleteSearchDocument() {};";
+      if (id === "\0hidaca-test-audit") return "export async function writeAudit() { if (globalThis.__HIDACA_TEST_EFFECTS?.failAudit) { globalThis.__HIDACA_TEST_EFFECTS.failAudit = false; throw new Error('injected audit failure'); } }";
+      if (id === "\0hidaca-test-search") return "export async function upsertSearchDocument() { if (globalThis.__HIDACA_TEST_EFFECTS?.failSearch) { globalThis.__HIDACA_TEST_EFFECTS.failSearch = false; throw new Error('injected search failure'); } }; export async function deleteSearchDocument() {};";
       return null;
     },
   };
@@ -97,6 +98,7 @@ async function setup() {
   };
   globalThis.__HIDACA_TEST_ENV = { DB, FILES };
   globalThis.__HIDACA_TEST_ACTOR = { email: "operator@example.test", role: "operator" };
+  globalThis.__HIDACA_TEST_EFFECTS = { failAudit: false, failSearch: false };
 
   const vite = await createServer({
     configFile: false,
@@ -129,11 +131,16 @@ async function setup() {
     setActor(actor: { email: string; role: string } | null) {
       globalThis.__HIDACA_TEST_ACTOR = actor;
     },
+    setEffectFailure(effect: "audit" | "search") {
+      if (!globalThis.__HIDACA_TEST_EFFECTS) throw new Error("test effects are unavailable");
+      globalThis.__HIDACA_TEST_EFFECTS[effect === "audit" ? "failAudit" : "failSearch"] = true;
+    },
     async close() {
       await vite.close();
       await miniflare.dispose();
       delete globalThis.__HIDACA_TEST_ENV;
       delete globalThis.__HIDACA_TEST_ACTOR;
+      delete globalThis.__HIDACA_TEST_EFFECTS;
     },
   };
 }
@@ -163,6 +170,42 @@ test("document upload lease stays active while R2 mutation is in flight", { time
     assert.equal((await upload).status, 201);
   } finally {
     await app.close();
+  }
+});
+
+test("upload repair retries failed audit and search effects before completion", { timeout: 120000 }, async () => {
+  for (const effect of ["audit", "search"] as const) {
+    const app = await setup();
+    try {
+      app.setActor({ email: "operator@example.test", role: "operator" });
+      app.setEffectFailure(effect);
+      const response = await app.upload.POST(uploadRequest(`upload-${effect}-failure`));
+      assert.equal(response.status, 202);
+      const pending = await response.json() as { operationId: string };
+      const operation = await app.DB.prepare(
+        "SELECT document_id AS documentId, status FROM document_storage_operations WHERE id = ?",
+      ).bind(pending.operationId).first<{ documentId: string; status: string }>();
+      assert.equal(operation?.status, "reconcile_required");
+      assert.ok(operation);
+
+      app.setActor({ email: "admin@example.test", role: "admin" });
+      const repair = await app.reconcile.POST(new Request(
+        "https://crm.example.test/api/admin/documents/reconciliation?repair=true",
+        { method: "POST" },
+      ));
+      assert.equal(repair.status, 200);
+      assert.equal((await app.DB.prepare(
+        "SELECT status FROM document_storage_operations WHERE id = ?",
+      ).bind(pending.operationId).first<{ status: string }>())?.status, "completed");
+      assert.equal((await app.DB.prepare(
+        "SELECT count(*) AS count FROM audit_log WHERE entity_type = 'document' AND entity_id = ? AND action = 'upload'",
+      ).bind(operation.documentId).first<{ count: number }>())?.count, 1);
+      assert.equal((await app.DB.prepare(
+        "SELECT count(*) AS count FROM search_documents WHERE entity_type = 'document' AND entity_id = ?",
+      ).bind(operation.documentId).first<{ count: number }>())?.count, 1);
+    } finally {
+      await app.close();
+    }
   }
 });
 

@@ -1,4 +1,5 @@
 import { getD1 } from "../../db";
+import { upsertSearchDocument } from "./search";
 import {
   buildDocumentStorageReport,
   metadataMatchesOperation,
@@ -204,6 +205,9 @@ export async function reconcileDocumentStorage(
         metadataMatchesOperation(operation, parsed) &&
         objectKeys.has(operation.objectKey)
       ) {
+        let document = snapshot.documents.find(
+          (item) => item.id === operation.documentId,
+        );
         if (!documentById.has(operation.documentId)) {
           await d1
             .prepare(
@@ -228,7 +232,41 @@ export async function reconcileDocumentStorage(
             documentId: operation.documentId,
             objectKey: operation.objectKey,
           });
+          document = { id: parsed.id, objectKey: parsed.objectKey };
+        } else if (!document) {
+          document = documentById.get(operation.documentId);
         }
+        if (!document) throw new Error("Document metadata could not be verified.");
+        await d1
+          .prepare(
+            `INSERT INTO audit_log
+             (actor_email, action, entity_type, entity_id, detail, created_at)
+             SELECT ?, 'upload', 'document', ?, ?, ?
+             WHERE NOT EXISTS (
+               SELECT 1 FROM audit_log
+               WHERE actor_email = ? AND action = 'upload'
+                 AND entity_type = 'document' AND entity_id = ? AND detail = ?
+             )`,
+          )
+          .bind(
+            parsed.createdBy,
+            parsed.id,
+            parsed.name,
+            parsed.createdAt,
+            parsed.createdBy,
+            parsed.id,
+            parsed.name,
+          )
+          .run();
+        await upsertSearchDocument({
+          entityType: "document",
+          entityId: parsed.id,
+          title: parsed.name,
+          subtitle: parsed.contentType,
+          searchText: parsed.name,
+          ownerEmail: parsed.createdBy,
+          updatedAt: parsed.createdAt,
+        });
         await transitionDocumentStorageOperation(
           operation.id,
           "completed",
