@@ -23,6 +23,7 @@ import {
   type ModuleKey,
 } from "../lib/modules";
 import type { AuthorizedUser } from "../lib/authorization";
+import { documentUploadKeyFor, postDocumentUpload, type DocumentUploadKeyState } from "../lib/document-upload";
 import {
   activityStatusLabels,
   leadStatusLabels,
@@ -283,6 +284,7 @@ export function OperationsClient({
   } | null>(null);
   const fontPreference = useFontPreference();
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const documentUploadKeyRef = useRef<DocumentUploadKeyState>(null);
   const sidebarRef = useRef<HTMLElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
   const activePermissionModule = moduleForView(view) ?? "inicio";
@@ -748,10 +750,15 @@ export function OperationsClient({
     setBusy(true);
     setMessage("");
     const data = new FormData(event.currentTarget);
-    const response = await fetch("/api/documents", {
-      method: "POST",
-      body: data,
-    });
+    const file = data.get("file");
+    const recordId = String(data.get("recordId") ?? "");
+    if (!(file instanceof File)) {
+      setBusy(false);
+      setMessage("Selecciona un archivo para cargar.");
+      return;
+    }
+    documentUploadKeyRef.current = documentUploadKeyFor(documentUploadKeyRef.current, file, recordId);
+    const response = await postDocumentUpload(data, documentUploadKeyRef.current.key);
     const result = (await response.json()) as {
       document?: DocumentRow;
       error?: string;
@@ -762,6 +769,7 @@ export function OperationsClient({
       return;
     }
     setDocuments([result.document, ...documents]);
+    documentUploadKeyRef.current = null;
     event.currentTarget.reset();
     setMessage("Documento cargado.");
   }

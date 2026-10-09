@@ -4,6 +4,7 @@ import { getDb } from "../../../db";
 import { documents } from "../../../db/schema";
 import { writeAudit } from "../../lib/audit";
 import { authorizeApi } from "../../lib/authorization";
+import { withDocumentWriteLease } from "../../lib/document-write-barrier";
 import {
   createDocumentStorageOperation,
   findDocumentStorageOperation,
@@ -53,6 +54,7 @@ export async function POST(request: Request) {
   const auth = await authorizeApi({ module: "documentos", action: "create" });
   if (!auth.ok) return auth.response;
 
+  return withDocumentWriteLease(request, "documents-upload", async () => {
   const form = await request.formData();
   const file = form.get("file");
   const recordId = String(form.get("recordId") ?? "").trim() || null;
@@ -221,7 +223,7 @@ export async function POST(request: Request) {
       new Date().toISOString(),
       message,
     ).catch(() => undefined);
-    return Response.json(
+  return Response.json(
       {
         error: "La carga quedó pendiente de reconciliación; puedes reintentar con la misma clave.",
         operationId: operation.id,
@@ -230,4 +232,5 @@ export async function POST(request: Request) {
       { status: 202 },
     );
   }
+  });
 }

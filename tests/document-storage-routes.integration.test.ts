@@ -12,7 +12,7 @@ declare global {
 }
 
 type Bucket = {
-  put(key: string, value: ArrayBuffer | ReadableStream, options?: unknown): Promise<unknown>;
+  put(key: string, value: string | ArrayBuffer | ReadableStream, options?: unknown): Promise<unknown>;
   get(key: string): Promise<{ body: ReadableStream; httpMetadata?: { contentType?: string } } | null>;
   delete(key: string): Promise<void>;
   list(options?: { prefix?: string; cursor?: string; limit?: number }): Promise<{
@@ -27,12 +27,12 @@ const authorizationModule = `
 export async function authorizeApi(options) {
   const actor = globalThis.__HIDACA_TEST_ACTOR;
   if (!actor) return { ok: false, response: Response.json({ error: "Unauthorized" }, { status: 401 }) };
+  if (options === true && actor.role !== "admin") return { ok: false, response: Response.json({ error: "Forbidden" }, { status: 403 }) };
   if (options?.module === "documentos" && options.action === "delete" && actor.role !== "admin") {
     return { ok: false, response: Response.json({ error: "Forbidden" }, { status: 403 }) };
   }
   return { ok: true, user: { email: actor.email } };
 }
-export function authorizeApiAdmin() { return true; }
 `;
 
 function testPlugin(): Plugin {
@@ -72,6 +72,7 @@ async function setup() {
       if (sql.replace(/--[^\n]*/g, "").trim()) await DB.prepare(sql).run();
     }
   }
+  await bucket.put("__control/maintenance-state.v1.json", JSON.stringify({ schemaVersion: 1, revision: 0, mode: "open", reason: "", operatorEmail: "", activatedAt: null, updatedAt: new Date().toISOString() }), { httpMetadata: { contentType: "application/json" } });
 
   let failPut = false;
   let failDelete = false;
@@ -189,6 +190,8 @@ test("upload storage and metadata failures leave repairable state; delete failur
     assert.ok(operation);
     assert.ok(await app.bucket.get(operation.objectKey));
     await app.DB.prepare("DROP TRIGGER reject_document_metadata").run();
+    const deniedRepair = await app.reconcile.POST(new Request("https://crm.example.test/api/admin/documents/reconciliation?repair=true", { method: "POST" }));
+    assert.equal(deniedRepair.status, 403);
     app.setActor({ email: "admin@example.test", role: "admin" });
     const repair = await app.reconcile.POST(new Request("https://crm.example.test/api/admin/documents/reconciliation?repair=true", { method: "POST" }));
     assert.equal(repair.status, 200);

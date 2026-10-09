@@ -4,6 +4,7 @@ import { getDb } from "../../../../db";
 import { documents } from "../../../../db/schema";
 import { writeAudit } from "../../../lib/audit";
 import { authorizeApi } from "../../../lib/authorization";
+import { withDocumentWriteLease } from "../../../lib/document-write-barrier";
 import {
   createDocumentStorageOperation,
   findDocumentStorageOperation,
@@ -69,6 +70,7 @@ export async function DELETE(request: Request, context: RouteContext) {
   const auth = await authorizeApi({ module: "documentos", action: "delete" });
   if (!auth.ok) return auth.response;
 
+  return withDocumentWriteLease(request, "documents-delete", async () => {
   const { id } = await context.params;
   const idempotencyKey = requestIdempotencyKey(request, `delete:${id}`);
   const existing = await findDocumentStorageOperation(idempotencyKey);
@@ -181,4 +183,5 @@ export async function DELETE(request: Request, context: RouteContext) {
       { status: 202 },
     );
   }
+  });
 }

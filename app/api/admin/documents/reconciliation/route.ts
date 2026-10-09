@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { authorizeApi } from "../../../../lib/authorization";
+import { withDocumentWriteLease } from "../../../../lib/document-write-barrier";
 import { reconcileDocumentStorage } from "../../../../lib/document-storage";
 
 type FilesBucket = {
@@ -45,14 +46,16 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
-  try {
-    return Response.json(await reconcileDocumentStorage(filesBucket(), true), {
-      headers: { "cache-control": "private, no-store" },
-    });
-  } catch {
-    return Response.json(
-      { error: "No se pudo ejecutar la reparación de documentos." },
-      { status: 503 },
-    );
-  }
+  return withDocumentWriteLease(request, "document-storage-reconciliation", async () => {
+    try {
+      return Response.json(await reconcileDocumentStorage(filesBucket(), true), {
+        headers: { "cache-control": "private, no-store" },
+      });
+    } catch {
+      return Response.json(
+        { error: "No se pudo ejecutar la reconciliación de documentos." },
+        { status: 503 },
+      );
+    }
+  });
 }
