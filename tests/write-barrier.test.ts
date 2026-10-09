@@ -266,6 +266,34 @@ test("rollback restore evidence survives D1 restore and reports erased post-snap
   }
 });
 
+test("rollback restore evidence detects a post-snapshot edit reverted on an existing row", async () => {
+  const { binding, sqlite } = database();
+  try {
+    const snapshotAt = "2026-09-14T04:00:00.000Z";
+    const changedAt = "2026-09-14T05:00:00.000Z";
+    sqlite.prepare("INSERT INTO businesses (id, name, normalized_name, owner_email, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run("restore-business", "Restore test", "restore test", "owner@example.test", "owner@example.test", snapshotAt, changedAt);
+    sqlite.prepare("INSERT INTO projects (id, business_id, name, owner_email, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run("edited-project", "restore-business", "Post-snapshot edit", "owner@example.test", "owner@example.test", snapshotAt, changedAt);
+
+    const beforeInventory = await captureRollbackInventory(binding, snapshotAt);
+    assert.equal(beforeInventory.projects.length, 1);
+
+    // Simulate restoring the pre-snapshot row version: its ID remains, but its
+    // post-snapshot updated_at version has been lost.
+    sqlite.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").run(snapshotAt, "edited-project");
+    assert.equal(sqlite.prepare("SELECT id FROM projects WHERE id = ?").get("edited-project")?.id, "edited-project");
+
+    const afterInventory = await captureRollbackInventory(binding, snapshotAt);
+    const evidence = compareRollbackInventory(beforeInventory, afterInventory, changedAt);
+    assert.equal(evidence.erasedPostSnapshot.projects.count, 1);
+    assert.equal(evidence.erasedPostSnapshot.projects.sample[0]?.id, "edited-project");
+    assert.equal(evidence.erasedPostSnapshot.projects.sample[0]?.created_at, changedAt);
+  } finally {
+    sqlite.close();
+  }
+});
+
 test("rollback reconciliation flags post-snapshot quotation edits recorded only in entity history", async () => {
   const { binding, sqlite, files } = database();
   try {

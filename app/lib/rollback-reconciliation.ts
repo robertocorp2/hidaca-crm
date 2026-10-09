@@ -45,8 +45,8 @@ export async function captureRollbackInventory(d1: D1Database, snapshotAt: strin
 
 export function compareRollbackInventory(before: RollbackSnapshotInventory, after: RollbackSnapshotInventory, capturedAt: string) {
   const erasedPostSnapshot = Object.fromEntries(Object.entries(before).map(([name, priorRows]) => {
-    const restoredIds = new Set((after[name] ?? []).map(({ id }) => id));
-    const missing = priorRows.filter(({ id }) => !restoredIds.has(id));
+    const restoredVersions = new Set((after[name] ?? []).map(({ id, created_at }) => `${id}\u0000${created_at}`));
+    const missing = priorRows.filter(({ id, created_at }) => !restoredVersions.has(`${id}\u0000${created_at}`));
     return [name, { count: missing.length, sample: missing.slice(0, 20) }] as const;
   }));
   return { capturedAt, erasedPostSnapshot };
