@@ -33,7 +33,7 @@ test("document reconciliation is private and repair requires explicit admin inte
 });
 
 test("storage operations preserve state after document metadata is deleted", async () => {
-  const migration = await read("drizzle/0026_document_storage_reconciliation.sql");
+  const migration = await read("drizzle/0027_document_storage_reconciliation.sql");
   assert.match(migration, /document_storage_operations/);
   assert.match(migration, /idempotency_key/);
   assert.match(migration, /metadata_pending/);
