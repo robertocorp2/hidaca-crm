@@ -130,6 +130,7 @@ export function AppearancePreferences({
           >
             <input
               checked={value === choice.id}
+              className="choice-control"
               name="hidaca-font"
               onChange={() => onChange(choice.id)}
               type="radio"
