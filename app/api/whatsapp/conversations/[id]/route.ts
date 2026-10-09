@@ -26,7 +26,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
         try { await markWhatsAppMessageRead(metaMessageId); } catch { /* diagnostics surface failures, opening must remain usable */ }
       });
     } catch (error) {
-      if (error instanceof MaintenanceModeError) return maintenanceResponse(error);
+      if (error instanceof MaintenanceModeError || (error as { code?: string })?.code === "MAINTENANCE_AUTHORITY_UNAVAILABLE") return maintenanceResponse();
       throw error;
     }
   }

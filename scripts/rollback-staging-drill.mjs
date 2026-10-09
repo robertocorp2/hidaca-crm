@@ -37,7 +37,7 @@ export function validateBaseUrl(value) {
 export function validateReconciliation(reconciliation) {
   const r2 = reconciliation?.r2;
   const postSnapshot = reconciliation?.d1?.postSnapshot;
-  const requiredPostSnapshot = ["documents", "importFiles", "ecfArtifacts", "ecfInboundMessages", "voiceRecordings", "whatsappMessages", "whatsappWebhookEvents", "whatsappCampaignRecipients", "whatsappCampaignDeliveryAttempts", "prospectingJobs", "auditLog"];
+  const requiredPostSnapshot = ["documents", "importFiles", "ecfArtifacts", "ecfInboundMessages", "voiceRecordings", "whatsappMessages", "whatsappWebhookEvents", "whatsappCampaignRecipients", "whatsappCampaignDeliveryAttempts", "prospectingJobs", "projects", "projectAddresses", "projectLocations", "projectContacts", "projectSearchDocuments", "projectHistory", "auditLog"];
   const maintenanceEntryAudit = reconciliation?.d1?.maintenanceEntryAudit;
   const untrackedInboundMessages = reconciliation?.d1?.untrackedInboundMessages;
   const unresolvedWriters = reconciliation?.d1?.unresolvedWriters;

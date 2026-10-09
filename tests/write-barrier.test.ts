@@ -10,6 +10,7 @@ import {
   getMaintenanceStatus,
   maintenanceResponse,
   reopenMaintenance,
+  renewWriteLease,
   releaseWriteLease,
   withWriteLease,
 } from "../app/lib/write-barrier";
@@ -197,6 +198,62 @@ test("rollback reconciliation separates the drill's own maintenance-entry audit"
     assert.equal(report.r2.maintenanceAuthority.present, true);
     assert.equal(report.r2.maintenanceAuthority.mode, "maintenance");
     assert.equal(report.r2.maintenanceAuthority.updatedAfterSnapshot, true);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("rollback reconciliation flags projects and every project row created after the snapshot", async () => {
+  const { binding, sqlite, files } = database();
+  try {
+    const createdAt = "2026-09-14T05:00:00.000Z";
+    sqlite.prepare("INSERT INTO businesses (id, name, normalized_name, owner_email, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run("business-rollback", "Post-snapshot business", "post-snapshot business", "owner@example.test", "owner@example.test", createdAt, createdAt);
+    sqlite.prepare("INSERT INTO contacts (id, business_id, name, owner_email, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run("contact-rollback", "business-rollback", "Project contact", "owner@example.test", "owner@example.test", createdAt, createdAt);
+    sqlite.prepare("INSERT INTO projects (id, business_id, name, owner_email, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run("project-after-snapshot", "business-rollback", "New project", "owner@example.test", "owner@example.test", createdAt, createdAt);
+    sqlite.prepare("INSERT INTO addresses (id, project_id, type, line1, created_by, created_at, updated_at) VALUES (?, ?, 'project', ?, ?, ?, ?)")
+      .run("address-after-snapshot", "project-after-snapshot", "Main street", "owner@example.test", createdAt, createdAt);
+    sqlite.prepare("INSERT INTO project_locations (id, project_id, address_id, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run("location-after-snapshot", "project-after-snapshot", "address-after-snapshot", "owner@example.test", createdAt, createdAt);
+    sqlite.prepare("INSERT INTO project_contacts (project_id, contact_id, created_by, created_at) VALUES (?, ?, ?, ?)")
+      .run("project-after-snapshot", "contact-rollback", "owner@example.test", createdAt);
+    sqlite.prepare("INSERT INTO search_documents (entity_type, entity_id, title, owner_email, updated_at) VALUES ('project', ?, ?, ?, ?)")
+      .run("project-after-snapshot", "New project", "owner@example.test", createdAt);
+    sqlite.prepare("INSERT INTO entity_history (entity_type, entity_id, action, actor_email, created_at) VALUES ('project', ?, 'created', ?, ?)")
+      .run("project-after-snapshot", "owner@example.test", createdAt);
+
+    const report = await reconcileRollback(binding, {
+      get: files.get.bind(files),
+      async list() { return { objects: [], truncated: false }; },
+    }, "2026-09-14T04:00:00.000Z");
+    for (const item of ["projects", "projectAddresses", "projectLocations", "projectContacts", "projectSearchDocuments", "projectHistory"] as const) {
+      assert.equal(report.d1.postSnapshot[item].count, 1, `${item} must be reported after snapshot restore`);
+    }
+    assert.equal(report.d1.postSnapshot.projects.sample[0]?.id, "project-after-snapshot");
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("a failed authority renewal keeps the active D1 lease visible to maintenance drain", async () => {
+  const { binding, sqlite, files } = database();
+  try {
+    const lease = await acquireWriteLease(binding, files, "api:renewal-test", "renewal-request");
+    const before = sqlite.prepare("SELECT expires_at FROM write_leases WHERE id = ?").get(lease.id) as { expires_at: string };
+    await assert.rejects(
+      () => enterMaintenance(binding, { reason: "drain test", operatorEmail: "admin@example.test", timeoutMs: 0 }, files),
+      { code: "MAINTENANCE_DRAIN_TIMEOUT" },
+    );
+    await assert.rejects(
+      () => renewWriteLease(binding, lease, { ...files, async get() { throw Object.assign(new Error("authority unavailable"), { code: "MAINTENANCE_AUTHORITY_UNAVAILABLE" }); } }),
+      { code: "MAINTENANCE_AUTHORITY_UNAVAILABLE" },
+    );
+    const after = sqlite.prepare("SELECT expires_at, outcome FROM write_leases WHERE id = ?").get(lease.id) as { expires_at: string; outcome: string | null };
+    assert.notEqual(after.expires_at, before.expires_at);
+    assert.equal(after.outcome, null);
+    assert.equal((await getMaintenanceStatus(binding, files)).activeWriterCount, 1);
   } finally {
     sqlite.close();
   }

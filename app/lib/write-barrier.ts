@@ -148,19 +148,21 @@ export async function assertWriteLeaseActive(d1: D1Database, files: MaintenanceB
 }
 
 export async function renewWriteLease(d1: D1Database, lease: Pick<WriteLease, "id" | "generation">, files: MaintenanceBucket, ttlMs = DEFAULT_LEASE_TTL_MS) {
-  await requireAuthorityOpen(files);
   const renewedAt = new Date().toISOString();
   const expiresAt = new Date(Date.now() + Math.max(1_000, ttlMs)).toISOString();
   const result = await d1
     .prepare(
       `UPDATE write_leases
        SET renewed_at = ?, expires_at = ?
-       WHERE id = ? AND generation = ? AND outcome IS NULL
-         AND EXISTS (SELECT 1 FROM maintenance_state WHERE id = 1 AND mode = 'open' AND generation = ?)`,
+       WHERE id = ? AND generation = ? AND outcome IS NULL`,
     )
-    .bind(renewedAt, expiresAt, lease.id, lease.generation, lease.generation)
+    .bind(renewedAt, expiresAt, lease.id, lease.generation)
     .run();
   if (Number(result.meta.changes ?? 0) !== 1) throw new MaintenanceModeError();
+  // Keep an in-flight callback visible to the drain after the barrier closes or
+  // R2 authority reads fail. This renews its existing lease only; acquisition
+  // still requires an open R2 authority, so a new writer cannot use this path.
+  await requireAuthorityOpen(files);
   return { ...lease, renewedAt, expiresAt };
 }
 
