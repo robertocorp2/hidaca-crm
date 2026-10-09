@@ -4,7 +4,7 @@ import test from "node:test";
 import { DrillFailure, runDrill, validateBaseUrl, validateReconciliation } from "../scripts/rollback-staging-drill.mjs";
 
 function cleanReconciliation() {
-  const postSnapshot = Object.fromEntries(["documents", "importFiles", "ecfArtifacts", "ecfInboundMessages", "voiceRecordings", "whatsappMessages", "whatsappWebhookEvents", "whatsappCampaignRecipients", "whatsappCampaignDeliveryAttempts", "prospectingJobs", "auditLog"].map((name) => [name, { count: 0, sample: [] }]));
+  const postSnapshot = Object.fromEntries(["documents", "importFiles", "ecfArtifacts", "ecfInboundMessages", "voiceRecordings", "whatsappMessages", "whatsappWebhookEvents", "whatsappCampaignRecipients", "whatsappCampaignDeliveryAttempts", "prospectingJobs", "projects", "projectAddresses", "projectLocations", "projectContacts", "projectSearchDocuments", "projectHistory", "auditLog"].map((name) => [name, { count: 0, sample: [] }]));
   return {
     snapshotAt: "2026-09-18T18:00:00.000Z",
     checkedAt: "2026-09-18T18:01:00.000Z",
@@ -133,6 +133,7 @@ test("reconciliation validator rejects omitted or null post-snapshot evidence", 
   assert.ok(documents);
   assert.throws(() => validateReconciliation({ ...clean, d1: { ...clean.d1, postSnapshot: withoutDocuments } }), /not clean/i);
   assert.throws(() => validateReconciliation({ ...clean, d1: { ...clean.d1, postSnapshot: { ...clean.d1.postSnapshot, voiceRecordings: { count: null, sample: [] } } } }), /not clean/i);
+  assert.throws(() => validateReconciliation({ ...clean, d1: { ...clean.d1, postSnapshot: { ...clean.d1.postSnapshot, projects: { count: 1, sample: [{ id: "project-after-snapshot", created_at: "2026-09-14T05:00:00.000Z" }] } } } }), /not clean/i);
   assert.throws(() => validateReconciliation({ ...clean, d1: { ...clean.d1, untrackedInboundMessages: { count: null, sample: [] } } }), /not clean/i);
 });
 
