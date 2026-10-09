@@ -923,6 +923,7 @@ export function OperationsClient({
                   }
                 }}
                 ref={menuButtonRef}
+                aria-expanded={drawerNavigation ? mobileNav : undefined}
                 size="md"
                 type="button"
               >
@@ -960,6 +961,7 @@ export function OperationsClient({
                 mobileSearchOpen ? "Cerrar búsqueda" : "Abrir búsqueda global"
               }
               className="mobile-search-button"
+              aria-expanded={mobileSearchOpen}
               onClick={() => setMobileSearchOpen((value) => !value)}
               size="md"
               type="button"

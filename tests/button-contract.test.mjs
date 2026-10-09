@@ -74,6 +74,8 @@ test("shared button primitives expose the canonical variant and size contract", 
   assert.match(operations, /<Button variant="primary" onClick=\{openCreate\}/);
   assert.match(operations, /<IconButton[\s\S]*className="menu-button"/);
   assert.match(operations, /<IconButton[\s\S]*className="mobile-search-button"/);
+  assert.match(operations, /className="menu-button"[\s\S]*aria-expanded=\{drawerNavigation \? mobileNav : undefined\}/);
+  assert.match(operations, /className="mobile-search-button"[\s\S]*aria-expanded=\{mobileSearchOpen\}/);
   assert.match(operations, /<Button aria-label="Más módulos"[\s\S]*variant="text"/);
   assert.match(operations, /<Button[\s\S]*className="profile-trigger"/);
   assert.match(workspace, /<Button[\s\S]*className="record-more-button"/);
