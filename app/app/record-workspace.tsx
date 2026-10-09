@@ -723,13 +723,33 @@ export function RecordWorkspace({
   const visibleError = loadedRecordId === record.id ? error : "";
   const responseBusiness = visibleData && "business" in visibleData && visibleData.business ? visibleData.business : null;
   const summaryLabel = "Acerca de";
+  const performancePrefix = `hidaca-record-${kind}-${record.id}`;
+
+  function markPerformance(name: string) {
+    if (typeof window !== "undefined") window.performance.mark(name);
+  }
+
+  function measurePerformance(name: string, startMark: string, endMark: string) {
+    if (typeof window !== "undefined") {
+      try {
+        window.performance.measure(name, startMark, endMark);
+      } catch {
+        // Performance marks are diagnostic only and must never affect record loading.
+      }
+    }
+  }
 
   useEffect(() => {
     const controller = new AbortController();
+    const requestStartMark = `${performancePrefix}-request-start`;
+    const dataReadyMark = `${performancePrefix}-data-ready`;
+    markPerformance(requestStartMark);
     void fetch(`/api/${endpoint}/${encodeURIComponent(record.id)}`, { signal: controller.signal })
       .then(async (response) => {
         const result = (await response.json()) as { error?: string };
         if (!response.ok) throw new Error(result.error ?? "No se pudieron cargar las relaciones.");
+        markPerformance(dataReadyMark);
+        measurePerformance(`${performancePrefix}-request`, requestStartMark, dataReadyMark);
         setData(result as BusinessDetailResponse | ContactDetailResponse);
         setError("");
         setLoadedRecordId(record.id);
@@ -741,7 +761,15 @@ export function RecordWorkspace({
         }
       });
     return () => controller.abort();
-  }, [endpoint, record.id]);
+  }, [endpoint, performancePrefix, record.id]);
+
+  useEffect(() => {
+    if (kind !== "business" || !visibleData) return;
+    const contentReadyMark = `${performancePrefix}-content-ready`;
+    const requestStartMark = `${performancePrefix}-request-start`;
+    markPerformance(contentReadyMark);
+    measurePerformance(`${performancePrefix}-time-to-first-content`, requestStartMark, contentReadyMark);
+  }, [kind, performancePrefix, visibleData]);
 
   const timeline = useMemo(
     () => (visibleData ? makeTimeline(kind, record, activities, visibleData) : []),
