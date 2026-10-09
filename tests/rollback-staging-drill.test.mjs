@@ -5,10 +5,11 @@ import { DrillFailure, runDrill, validateBaseUrl, validateReconciliation } from 
 
 function cleanReconciliation() {
   const postSnapshot = Object.fromEntries(["documents", "importFiles", "ecfArtifacts", "ecfInboundMessages", "voiceRecordings", "whatsappMessages", "whatsappWebhookEvents", "whatsappCampaignRecipients", "whatsappCampaignDeliveryAttempts", "prospectingJobs", "projects", "projectAddresses", "projectLocations", "projectContacts", "projectSearchDocuments", "projectHistory", "auditLog"].map((name) => [name, { count: 0, sample: [] }]));
+  const erasedPostSnapshot = Object.fromEntries(Object.keys(postSnapshot).map((name) => [name, { count: 0, sample: [] }]));
   return {
     snapshotAt: "2026-09-18T18:00:00.000Z",
     checkedAt: "2026-09-18T18:01:00.000Z",
-    d1: { referencedObjectCount: 0, postSnapshot, maintenanceEntryAudit: { count: 0, sample: [] }, untrackedInboundMessages: { count: 0, sample: [] }, unresolvedWriters: { whatsappWebhooks: { count: 0, sample: [] }, whatsappCampaigns: { count: 0, sample: [] }, prospectingJobs: { count: 0, sample: [] } } },
+    d1: { referencedObjectCount: 0, postSnapshot, restoreEvidence: { capturedAt: "2026-09-18T18:00:30.000Z", erasedPostSnapshot }, maintenanceEntryAudit: { count: 0, sample: [] }, untrackedInboundMessages: { count: 0, sample: [] }, unresolvedWriters: { whatsappWebhooks: { count: 0, sample: [] }, whatsappCampaigns: { count: 0, sample: [] }, prospectingJobs: { count: 0, sample: [] } } },
     r2: { inventoryComplete: true, objectCount: 1, manifestSha256: "a".repeat(64), maintenanceAuthority: { present: true, mode: "maintenance", revision: 2, updatedAfterSnapshot: true }, postSnapshotObjects: [], missingReferencedObjects: [], orphanedObjects: [] },
   };
 }
@@ -32,7 +33,7 @@ test("local-only drill harness drains, reconciles, and reopens through a test se
       { mode: "maintenance", generation: 5, activeWriterCount: 0, activeWriters: [] },
     ],
     "/api/maintenance/enter": { mode: "maintenance", generation: 5, activeWriterCount: 1, activeWriters: [{ id: "writer-1" }] },
-    "/api/maintenance/reconciliation": cleanReconciliation(),
+    "/api/maintenance/reconciliation": [cleanReconciliation(), cleanReconciliation()],
     "/api/maintenance/reopen": { mode: "open", generation: 6, activeWriterCount: 0, activeWriters: [] },
   };
   const evidence = await withServer(async (request, response) => {
@@ -46,8 +47,10 @@ test("local-only drill harness drains, reconciles, and reopens through a test se
   assert.equal(evidence.outcome, "passed");
   assert.deepEqual(calls.map(({ method, url }) => [method, url.split("?")[0]]), [
     ["GET", "/api/maintenance"], ["POST", "/api/maintenance/enter"], ["GET", "/api/maintenance"],
-    ["GET", "/api/maintenance/reconciliation"], ["POST", "/api/maintenance/reopen"],
+    ["GET", "/api/maintenance/reconciliation"], ["GET", "/api/maintenance/reconciliation"], ["POST", "/api/maintenance/reopen"],
   ]);
+  assert.match(calls[3].url, /phase=before-restore/);
+  assert.match(calls[4].url, /phase=after-restore/);
   assert.ok(calls.every((call) => call.email === undefined));
 });
 
@@ -147,4 +150,25 @@ test("reconciliation accepts one maintenance-entry audit but rejects a second en
   const entry = { id: "1", created_at: "2026-09-18T18:00:30.000Z" };
   assert.doesNotThrow(() => validateReconciliation({ ...clean, d1: { ...clean.d1, maintenanceEntryAudit: { count: 1, sample: [entry] } } }));
   assert.throws(() => validateReconciliation({ ...clean, d1: { ...clean.d1, maintenanceEntryAudit: { count: 2, sample: [entry, { ...entry, id: "2" }] } } }), /not clean/i);
+});
+
+test("reconciliation rejects missing or erased pre-restore D1 evidence", () => {
+  const clean = cleanReconciliation();
+  const { restoreEvidence, ...withoutEvidence } = clean.d1;
+  assert.ok(restoreEvidence);
+  assert.throws(() => validateReconciliation({ ...clean, d1: withoutEvidence }), /not clean/i);
+  const withErasedProject = {
+    ...clean,
+    d1: {
+      ...clean.d1,
+      restoreEvidence: {
+        ...restoreEvidence,
+        erasedPostSnapshot: {
+          ...restoreEvidence.erasedPostSnapshot,
+          projects: { count: 1, sample: [{ id: "project-1", created_at: "2026-09-18T18:00:20.000Z" }] },
+        },
+      },
+    },
+  };
+  assert.throws(() => validateReconciliation(withErasedProject), /not clean/i);
 });

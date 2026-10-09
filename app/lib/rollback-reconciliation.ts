@@ -17,6 +17,10 @@ export type RollbackReconciliation = {
     maintenanceEntryAudit: { count: number; sample: TimestampRow[] };
     untrackedInboundMessages: { count: number; sample: TimestampRow[] };
     unresolvedWriters: Record<string, { count: number; sample: TimestampRow[] }>;
+    restoreEvidence?: {
+      capturedAt: string;
+      erasedPostSnapshot: Record<string, { count: number; sample: TimestampRow[] }>;
+    };
   };
   r2: {
     inventoryComplete: boolean;
@@ -29,6 +33,25 @@ export type RollbackReconciliation = {
   };
 };
 
+export type RollbackSnapshotInventory = Record<string, TimestampRow[]>;
+
+export async function captureRollbackInventory(d1: D1Database, snapshotAt: string): Promise<RollbackSnapshotInventory> {
+  return Object.fromEntries(await Promise.all(Object.entries(POST_SNAPSHOT_QUERIES).map(async ([name, queries]) => {
+    const inventoryQuery = queries.sample.replace(/\s+LIMIT 20\s*$/i, "");
+    const rows = await d1.prepare(inventoryQuery).bind(snapshotAt).all<TimestampRow>();
+    return [name, rows.results ?? []] as const;
+  })));
+}
+
+export function compareRollbackInventory(before: RollbackSnapshotInventory, after: RollbackSnapshotInventory, capturedAt: string) {
+  const erasedPostSnapshot = Object.fromEntries(Object.entries(before).map(([name, priorRows]) => {
+    const restoredIds = new Set((after[name] ?? []).map(({ id }) => id));
+    const missing = priorRows.filter(({ id }) => !restoredIds.has(id));
+    return [name, { count: missing.length, sample: missing.slice(0, 20) }] as const;
+  }));
+  return { capturedAt, erasedPostSnapshot };
+}
+
 const REFERENCE_QUERIES = [
   "SELECT object_key AS key FROM documents WHERE object_key <> ''",
   "SELECT extracted_object_key AS key FROM import_files WHERE extracted_object_key <> ''",
@@ -37,6 +60,7 @@ const REFERENCE_QUERIES = [
   "SELECT media_key AS key FROM whatsapp_messages WHERE media_key IS NOT NULL AND media_key <> ''",
   "SELECT object_key AS key FROM ecf_inbound_messages WHERE object_key IS NOT NULL AND object_key <> ''",
 ];
+const ROLLBACK_EVIDENCE_PREFIX = "backups/rollback-evidence/";
 
 const POST_SNAPSHOT_QUERIES: Record<string, { sample: string; count: string }> = {
   documents: { sample: "SELECT id, created_at FROM documents WHERE created_at > ? ORDER BY created_at LIMIT 20", count: "SELECT COUNT(*) AS count FROM documents WHERE created_at > ?" },
@@ -126,7 +150,7 @@ export async function reconcileRollback(d1: D1Database, files: RollbackFiles, sn
       if (object.key === MAINTENANCE_AUTHORITY_KEY) {
         maintenanceAuthorityPresent = true;
         maintenanceAuthorityUpdatedAfterSnapshot = Boolean(object.uploaded && new Date(object.uploaded).getTime() > snapshotMs);
-      } else if (object.uploaded && new Date(object.uploaded).getTime() > snapshotMs) {
+      } else if (!object.key.startsWith(ROLLBACK_EVIDENCE_PREFIX) && object.uploaded && new Date(object.uploaded).getTime() > snapshotMs) {
         postSnapshotObjects.add(object.key);
       }
     }

@@ -87,11 +87,21 @@ the additive migration itself caused a verified data issue.
    `activeWriterCount` is zero. A timeout or unknown writer is an abort.
 3. Run `npx wrangler d1 time-travel info DB --timestamp=<RFC3339>` and record
    the returned bookmark.
-4. Keep the barrier closed while taking the final D1/R2 reconciliation snapshot.
+4. Keep the barrier closed and call
+   `GET /api/maintenance/reconciliation?snapshotAt=<RFC3339>&phase=before-restore`.
+   This requires zero active writers and stores the complete reconciliation
+   report and complete post-snapshot D1 row IDs/timestamps under the private R2
+   `backups/rollback-evidence/` prefix. Save the returned report and R2 key in
+   the external drill record. If capture fails or evidence already exists for
+   that timestamp, abort without restoring.
 5. Run `npx wrangler d1 time-travel restore DB --bookmark=<BOOKMARK>`.
-6. Run the reconciliation endpoint with the exact restore timestamp:
-   `GET /api/maintenance/reconciliation?snapshotAt=<RFC3339>`.
-7. Abort reopening if the inventory is incomplete, a D1 reference is missing
+6. Run the reconciliation endpoint with the exact restore timestamp and
+   `phase=after-restore`:
+   `GET /api/maintenance/reconciliation?snapshotAt=<RFC3339>&phase=after-restore`.
+   It compares the restored D1 against the external pre-restore inventory and
+   reports any post-snapshot rows erased by the restore.
+7. Abort reopening if the inventory is incomplete, pre-restore evidence is
+   missing, any post-snapshot D1 rows were erased, a D1 reference is missing
    in R2, an unexpected R2 object is orphaned, or post-snapshot rows/audit
    entries are present. A single maintenance-entry audit from the current
    drill is reported separately and is allowed; a second entry is an abort.
@@ -107,6 +117,9 @@ objects, and post-snapshot samples from each blob-backed table plus `audit_log`.
 Backup objects under `backups/` remain explicit rollback evidence and are not
 classified as orphaned by this check. An incomplete R2 listing is always an
 abort condition.
+The pre-restore report and complete D1 inventory are saved outside D1 under
+`backups/rollback-evidence/`; the reconciler excludes those evidence objects
+from post-snapshot object warnings so it does not flag its own record.
 The exact `__control/maintenance-state.v1.json` object is reported separately:
 it must be present, valid, and in maintenance mode. It may be newer than the snapshot because entering
 maintenance updates it. Other R2 objects retain the post-snapshot and orphan

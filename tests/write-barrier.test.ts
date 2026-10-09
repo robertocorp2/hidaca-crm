@@ -14,7 +14,7 @@ import {
   releaseWriteLease,
   withWriteLease,
 } from "../app/lib/write-barrier";
-import { reconcileRollback } from "../app/lib/rollback-reconciliation";
+import { captureRollbackInventory, compareRollbackInventory, reconcileRollback } from "../app/lib/rollback-reconciliation";
 import ecfGateway from "../worker/ecf-gateway";
 
 test("production writer entry points stay behind the shared barrier", async () => {
@@ -232,6 +232,35 @@ test("rollback reconciliation flags projects and every project row created after
       assert.equal(report.d1.postSnapshot[item].count, 1, `${item} must be reported after snapshot restore`);
     }
     assert.equal(report.d1.postSnapshot.projects.sample[0]?.id, "project-after-snapshot");
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("rollback restore evidence survives D1 restore and reports erased post-snapshot rows", async () => {
+  const { binding, sqlite } = database();
+  try {
+    const snapshotAt = "2026-09-14T04:00:00.000Z";
+    const createdAt = "2026-09-14T05:00:00.000Z";
+    sqlite.prepare("INSERT INTO businesses (id, name, normalized_name, owner_email, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run("restore-business", "Restore test", "restore test", "owner@example.test", "owner@example.test", createdAt, createdAt);
+    sqlite.prepare("INSERT INTO projects (id, business_id, name, owner_email, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run("erased-project", "restore-business", "Post-snapshot project", "owner@example.test", "owner@example.test", createdAt, createdAt);
+
+    const files = { get: async () => null, async list() { return { objects: [], truncated: false }; } };
+    const beforeRestore = await reconcileRollback(binding, files, snapshotAt);
+    const beforeInventory = await captureRollbackInventory(binding, snapshotAt);
+    assert.equal(beforeRestore.d1.postSnapshot.projects.count, 1);
+    assert.equal(beforeInventory.projects.length, 1);
+
+    sqlite.prepare("DELETE FROM projects WHERE id = ?").run("erased-project");
+    const afterRestore = await reconcileRollback(binding, files, snapshotAt);
+    const afterInventory = await captureRollbackInventory(binding, snapshotAt);
+    const evidence = compareRollbackInventory(beforeInventory, afterInventory, beforeRestore.checkedAt);
+    assert.equal(afterRestore.d1.postSnapshot.projects.count, 0);
+    assert.equal(evidence.erasedPostSnapshot.projects.count, 1);
+    assert.equal(evidence.erasedPostSnapshot.projects.sample[0]?.id, "erased-project");
+    assert.equal(evidence.erasedPostSnapshot.businesses, undefined);
   } finally {
     sqlite.close();
   }

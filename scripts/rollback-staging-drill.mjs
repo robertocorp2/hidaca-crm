@@ -39,6 +39,7 @@ export function validateReconciliation(reconciliation) {
   const postSnapshot = reconciliation?.d1?.postSnapshot;
   const requiredPostSnapshot = ["documents", "importFiles", "ecfArtifacts", "ecfInboundMessages", "voiceRecordings", "whatsappMessages", "whatsappWebhookEvents", "whatsappCampaignRecipients", "whatsappCampaignDeliveryAttempts", "prospectingJobs", "projects", "projectAddresses", "projectLocations", "projectContacts", "projectSearchDocuments", "projectHistory", "auditLog"];
   const maintenanceEntryAudit = reconciliation?.d1?.maintenanceEntryAudit;
+  const restoreEvidence = reconciliation?.d1?.restoreEvidence;
   const untrackedInboundMessages = reconciliation?.d1?.untrackedInboundMessages;
   const unresolvedWriters = reconciliation?.d1?.unresolvedWriters;
   const failures = [];
@@ -46,6 +47,7 @@ export function validateReconciliation(reconciliation) {
   if (r2?.maintenanceAuthority?.present !== true || r2?.maintenanceAuthority?.mode !== "maintenance") failures.push("R2 maintenance authority is missing or not closed");
   if (!Array.isArray(r2?.missingReferencedObjects) || !Array.isArray(r2?.orphanedObjects) || !Array.isArray(r2?.postSnapshotObjects)) failures.push("R2 reconciliation evidence is incomplete");
   if (!postSnapshot || requiredPostSnapshot.some((name) => !Number.isInteger(postSnapshot[name]?.count) || postSnapshot[name].count !== 0 || !Array.isArray(postSnapshot[name].sample) || postSnapshot[name].sample.length !== 0)) failures.push("D1 post-snapshot evidence is incomplete or contains rows");
+  if (!restoreEvidence?.capturedAt || !restoreEvidence.erasedPostSnapshot || requiredPostSnapshot.some((name) => !Number.isInteger(restoreEvidence.erasedPostSnapshot[name]?.count) || restoreEvidence.erasedPostSnapshot[name].count !== 0)) failures.push("D1 pre-restore inventory is missing or contains erased rows");
   if ((r2?.missingReferencedObjects ?? []).length) failures.push("R2 references are missing");
   if ((r2?.orphanedObjects ?? []).length) failures.push("R2 contains unexpected orphaned objects");
   if ((r2?.postSnapshotObjects ?? []).length) failures.push("R2 contains post-snapshot objects");
@@ -122,7 +124,8 @@ export async function runDrill({
   }
   evidence.drained = drained;
 
-  const reconciliation = await requestJson(fetchImpl, target, `/api/maintenance/reconciliation?snapshotAt=${encodeURIComponent(evidence.snapshotAt)}`);
+  evidence.beforeRestoreInventory = await requestJson(fetchImpl, target, `/api/maintenance/reconciliation?snapshotAt=${encodeURIComponent(evidence.snapshotAt)}&phase=before-restore`);
+  const reconciliation = await requestJson(fetchImpl, target, `/api/maintenance/reconciliation?snapshotAt=${encodeURIComponent(evidence.snapshotAt)}&phase=after-restore`);
   evidence.reconciliation = reconciliation;
   validateReconciliation(reconciliation);
 
