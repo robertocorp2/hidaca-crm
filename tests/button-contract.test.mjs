@@ -53,6 +53,8 @@ test("shared button primitives expose the canonical variant and size contract", 
 
   assert.match(ui, /export function Button/);
   assert.match(ui, /export function IconButton/);
+  assert.match(ui, /<nav aria-label="Paginación" className="pagination">[\s\S]*<Button[\s\S]*variant="secondary"[\s\S]*Página \{page\} de \{totalPages\}[\s\S]*<Button[\s\S]*variant="secondary"/);
+  assert.doesNotMatch(css, /\.pagination \.secondary-button\s*\{[^}]*\b(?:min-height|padding|height|width):/);
   for (const variant of ["primary", "secondary", "danger", "ghost", "text"]) {
     assert.match(ui, new RegExp(`${variant}: "${variant}-button"`));
   }
