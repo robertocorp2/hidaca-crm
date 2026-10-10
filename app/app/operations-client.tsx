@@ -23,6 +23,7 @@ import {
   type ModuleKey,
 } from "../lib/modules";
 import type { AuthorizedUser } from "../lib/authorization";
+import { documentUploadKeyFor, postDocumentUpload, type DocumentUploadKeyState } from "../lib/document-upload";
 import {
   activityStatusLabels,
   leadStatusLabels,
@@ -283,6 +284,7 @@ export function OperationsClient({
   } | null>(null);
   const fontPreference = useFontPreference();
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const documentUploadKeyRef = useRef<DocumentUploadKeyState>(null);
   const sidebarRef = useRef<HTMLElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
   const activePermissionModule = moduleForView(view) ?? "inicio";
@@ -745,25 +747,37 @@ export function OperationsClient({
 
   async function uploadDocument(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const formElement = event.currentTarget;
     setBusy(true);
     setMessage("");
-    const data = new FormData(event.currentTarget);
-    const response = await fetch("/api/documents", {
-      method: "POST",
-      body: data,
-    });
-    const result = (await response.json()) as {
-      document?: DocumentRow;
-      error?: string;
-    };
-    setBusy(false);
-    if (!response.ok || !result.document) {
-      setMessage(result.error ?? "No se pudo cargar el documento.");
-      return;
+    try {
+      const data = new FormData(formElement);
+      const file = data.get("file");
+      const recordId = String(data.get("recordId") ?? "");
+      if (!(file instanceof File)) {
+        setMessage("Selecciona un archivo para cargar.");
+        return;
+      }
+      const selectedFile = formElement.querySelector<HTMLInputElement>('input[name="file"]')?.files?.[0] ?? file;
+      documentUploadKeyRef.current = documentUploadKeyFor(documentUploadKeyRef.current, selectedFile, recordId);
+      const response = await postDocumentUpload(data, documentUploadKeyRef.current.key);
+      const result = (await response.json()) as {
+        document?: DocumentRow;
+        error?: string;
+      };
+      if (!response.ok || !result.document) {
+        setMessage(result.error ?? "No se pudo cargar el documento. Puedes reintentar.");
+        return;
+      }
+      setDocuments([result.document, ...documents]);
+      documentUploadKeyRef.current = null;
+      formElement.reset();
+      setMessage("Documento cargado.");
+    } catch {
+      setMessage("No se pudo completar la carga. Puedes reintentar con la misma clave.");
+    } finally {
+      setBusy(false);
     }
-    setDocuments([result.document, ...documents]);
-    event.currentTarget.reset();
-    setMessage("Documento cargado.");
   }
 
   async function deleteDocument(document: DocumentRow) {
