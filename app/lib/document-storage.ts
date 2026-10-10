@@ -228,7 +228,24 @@ export async function reconcileDocumentStorage(
   const d1 = getD1();
 
   if (repair) {
+    // An unresolved upload and delete for the same document have competing
+    // intents. The inventory is only a point-in-time snapshot: completing one
+    // operation can make the other operation's cached D1/R2 view unsafe. Leave
+    // both visible for explicit investigation instead of replaying either one.
+    const conflictingDocumentIds = new Set<string>();
+    const operationKindsByDocument = new Map<string, Set<DocumentStorageOperationKind>>();
     for (const operation of snapshot.operations) {
+      const kinds = operationKindsByDocument.get(operation.documentId) ?? new Set();
+      kinds.add(operation.kind);
+      operationKindsByDocument.set(operation.documentId, kinds);
+    }
+    for (const [documentId, kinds] of operationKindsByDocument) {
+      if (kinds.size > 1) conflictingDocumentIds.add(documentId);
+    }
+
+    for (const operation of snapshot.operations) {
+      if (conflictingDocumentIds.has(operation.documentId)) continue;
+
       const metadata = await findDocumentStorageOperationById(operation.id);
       const parsed = metadata ? metadataFromOperation(metadata) : null;
       if (

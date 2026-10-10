@@ -260,6 +260,54 @@ test("delete audit and search failures remain retryable until repair completes",
   }
 });
 
+test("repair leaves conflicting upload and delete operations unresolved", { timeout: 120000 }, async () => {
+  const app = await setup();
+  try {
+    app.setActor({ email: "operator@example.test", role: "operator" });
+    app.setEffectFailure("search");
+    const uploaded = await app.upload.POST(uploadRequest("conflicting-upload-delete"));
+    assert.equal(uploaded.status, 202);
+    const { operationId: uploadOperationId } = await uploaded.json() as { operationId: string };
+    const uploadOperation = await app.DB.prepare(
+      "SELECT document_id AS documentId, object_key AS objectKey FROM document_storage_operations WHERE id = ?",
+    ).bind(uploadOperationId).first<{ documentId: string; objectKey: string }>();
+    assert.ok(uploadOperation);
+
+    app.setActor({ email: "admin@example.test", role: "admin" });
+    app.setFailures({ delete: true });
+    const deletion = await app.item.DELETE(
+      new Request(`https://crm.example.test/api/documents/${uploadOperation.documentId}`, {
+        method: "DELETE",
+        headers: { "Idempotency-Key": "conflicting-delete" },
+      }),
+      itemContext(uploadOperation.documentId),
+    );
+    assert.equal(deletion.status, 202);
+    const { operationId: deleteOperationId } = await deletion.json() as { operationId: string };
+    assert.equal((await app.DB.prepare(
+      "SELECT count(*) AS count FROM documents WHERE id = ?",
+    ).bind(uploadOperation.documentId).first<{ count: number }>())?.count, 0);
+    assert.ok(await app.bucket.get(uploadOperation.objectKey));
+
+    app.setActor({ email: "admin@example.test", role: "admin" });
+    const repair = await app.reconcile.POST(new Request(
+      "https://crm.example.test/api/admin/documents/reconciliation?repair=true",
+      { method: "POST" },
+    ));
+    assert.equal(repair.status, 200);
+    const statuses = await app.DB.prepare(
+      "SELECT id, status FROM document_storage_operations WHERE id IN (?, ?) ORDER BY id",
+    ).bind(uploadOperationId, deleteOperationId).all<{ id: string; status: string }>();
+    assert.deepEqual(statuses.results?.map(({ status }) => status), ["reconcile_required", "reconcile_required"]);
+    assert.equal((await app.DB.prepare(
+      "SELECT count(*) AS count FROM documents WHERE id = ?",
+    ).bind(uploadOperation.documentId).first<{ count: number }>())?.count, 0);
+    assert.ok(await app.bucket.get(uploadOperation.objectKey));
+  } finally {
+    await app.close();
+  }
+});
+
 test("document routes authorize access, persist metadata, retrieve bytes, and replay uploads idempotently", { timeout: 120000 }, async () => {
   const app = await setup();
   try {
@@ -296,7 +344,7 @@ test("document routes authorize access, persist metadata, retrieve bytes, and re
 test("a completed upload key cannot recreate a document after it was deleted", { timeout: 120000 }, async () => {
   const app = await setup();
   try {
-    app.setActor({ email: "operator@example.test", role: "operator" });
+    app.setActor({ email: "admin@example.test", role: "admin" });
     const uploaded = await app.upload.POST(uploadRequest("upload-delete-replay"));
     assert.equal(uploaded.status, 201);
     const { document, operationId } = await uploaded.json() as {
